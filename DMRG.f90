@@ -8,7 +8,9 @@ END MODULE CONST
 ! ############### MODEL ###################
 MODULE MODEL
 	USE CONST
-	COMPLEX :: Q = EXP(ZI*PI)
+	REAL :: BETA = 0.
+	REAL :: THETA = PI
+	INTEGER :: DCUT = 8
 END MODULE MODEL
 ! ############## PHYSICS ###################
 MODULE PHYSICS
@@ -22,10 +24,12 @@ SUBROUTINE SET_MPO(T)
 	! local variables
 	TYPE(TENSOR) :: X, Y, U, S
 	COMPLEX, ALLOCATABLE :: A(:,:)
-	INTEGER :: DCUT
+	COMPLEX :: Q, B
 	
 ! ++++++++ set the vertex tensor here ++++++++
-	X =  TENSOR([2,2,2,2],[1,2,3,4,6,7,8,9,11,12,13,14],[Q**0.25,Q**0.25,Z1,Q**0.25,Z1,Q**(-0.25),Q**0.25,Z1,Q**(-0.25),Z1,Q**(-0.25),Q**(-0.25)])
+	Q = THETA * ZI
+	B = BETA * Z1
+	X =  TENSOR([2,2,2,2],[0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15],[EXP(2*B),EXP(Q/4.),EXP(Q/4.),EXP(Z0),EXP(Q/4.),EXP(-2*B - Q/2.),EXP(Z0),EXP(-Q/4.),EXP(Q/4.),EXP(Z0),EXP(-2*B + Q/2.),EXP(-Q/4.),EXP(Z0),EXP(-Q/4.),EXP(-Q/4.),EXP(2*B)])
 ! ++++++++++++++++++++++++++++++++++++++++++++
 	! symm SVD of X to unitary U and diagonal S
 	CALL SYSVD(X,[1,4],[2,3],U,S)
@@ -38,22 +42,20 @@ SUBROUTINE SET_MPO(T)
 END SUBROUTINE SET_MPO
 ! ----------- DMRG -----------
 ! DMRG Kernel
-SUBROUTINE DMRG(T,G,L,DCUT)
+SUBROUTINE DMRG(T, G, L)
 ! perform infinite-size DMRG to find the max MPS of MPO
 ! input: T - MPO tensor
 ! output: G - entanglement tensor, L - Schmidt spectrum
-! parameter: DCUT - internal dim cutoff
-	USE CONST
+	USE MODEL
 	TYPE(TENSOR), INTENT(IN)  :: T ! input MPO tensor
 	TYPE(TENSOR), INTENT(OUT) :: G, L ! output MPS tensors
-	INTEGER, INTENT(IN) :: DCUT
 	! local tensors
 	TYPE(TENSOR) :: TE, A, LP, LF, W, TS
 	! local variables
 	COMPLEX :: TVAL
 	INTEGER :: ITER
 	! parameters
-	INTEGER, PARAMETER :: MAX_ITER = 7
+	INTEGER, PARAMETER :: MAX_ITER = 2
 	
 	! initialize tensors
 	CALL DMRG_INITIALIZATION(TE, A, LP, LF)
@@ -62,30 +64,32 @@ SUBROUTINE DMRG(T,G,L,DCUT)
 		W = STATE_ESTIMATE(A, LP, LF)
 		LP = LF ! LP has been used, update to LF
 		! construct system T tensor
+		CALL TEN_SAVE('TE',TE)
 		TS = MAKE_SYSTEM(TE, T)
+		CALL TEN_SAVE('TS',TEN_FLATTEN(TS,[1,3,5,7,0,2,4,6,8]))
 		! anneal the state W to the fixed point of TS
 !		IF (ITER == 2) THEN
 !			CALL TEN_PRINT(TS)
 !			CALL TEN_PRINT(W)
 !		END IF
 		TVAL = ANNEAL(TS, W)
-		PRINT *, TVAL
+		WRITE (*,'(A,2G12.4)') 'Tval = ', REAL(TVAL), IMAG(TVAL)
 		! SYSVD decompose W to A and LF
 		CALL SYSVD(W,[1,2],[3,4],A,LF,DCUT)
 		! update environment tensor TE
 		CALL UPDATE_ENVIRONMENT(TE, T, A)
 		! check convergence
 		! now LP and LF holds the successive Schmidt spectrums
-		CALL TEN_PRINT(TEN_PROD(LF,LF,[1],[1]))
+		WRITE (*,'(8F7.3)') ABS(LF%VALS)**2
 	END DO
 END SUBROUTINE DMRG
 ! initialization routine
-SUBROUTINE DMRG_INITIALIZATION(TE,A,LP,LF)
+SUBROUTINE DMRG_INITIALIZATION(TE, A, LP, LF)
 ! called by DMRG
 	USE CONST
 	TYPE(TENSOR), INTENT(OUT) :: TE, A, LP, LF
 	
-	TE = TENSOR([1,1,4],[0],[Z1])
+	TE = TENSOR([1,4,1,4],[0,5,10,15],[Z1,Z1,Z1,Z1])
 	A  = TENSOR([1,2,1],[0,1],[Z1,Z1]/SQRT(2.))
 	LP = TENSOR([1,1],[0],[Z1])
 	LF = LP
@@ -114,9 +118,9 @@ FUNCTION MAKE_SYSTEM(TE, T) RESULT (TS)
 	TYPE(TENSOR) :: TB
 	
 	! construct block T tensor
-	TB = TEN_PROD(TE,T,[3],[2])
+	TB = TEN_PROD(TE,T,[4],[2])
 	! contract block tensor to system tensor
-	TS = TEN_PROD(TB,TB,[5],[5])
+	TS = TEN_PROD(TB,TB,[2,6],[2,6])
 END FUNCTION MAKE_SYSTEM
 ! anneal the state W to fix point of TS
 FUNCTION ANNEAL(TS, W) RESULT (TVAL)
@@ -168,7 +172,7 @@ SUBROUTINE UPDATE_ENVIRONMENT(TE, T, A)
 	TYPE(TENSOR) :: TE1
 	
 	! zipper-order contraction algorithm
-	TE1 = TEN_PROD(TEN_PROD(TEN_PROD(TE,TEN_CONJG(A),[1],[1]),A,[1],[1]),T,[2,1,4],[1,2,3])
+	TE1 = TEN_PROD(TEN_PROD(TEN_PROD(TEN_CONJG(A),TE,[1],[1]),A,[4],[1]),T,[1,4,5],[1,2,3])
 !	IF (ALL(TE1%DIMS == TE%DIMS)) THEN
 !		TE = TEN_ADD(TE,TE1)
 !		TE%VALS = TE%VALS/2
@@ -188,10 +192,13 @@ CONTAINS
 ! ------------ Tests -------------
 ! test routine
 SUBROUTINE TEST()
-	TYPE(TENSOR) :: T, G, L
+	TYPE(TENSOR) :: T, TE, A, LP, LF, TS
 	
 	CALL SET_MPO(T)
-	CALL DMRG(T, G, L, 6)
+	CALL DMRG_INITIALIZATION(TE,A,LP,LF)
+	TS = MAKE_SYSTEM(TE, T)
+	TS = TEN_FLATTEN(TS,[1,3,7,5,0,2,4,8,6])
+	CALL TEN_SAVE('TS',TS)
 END SUBROUTINE TEST
 ! test MPO
 SUBROUTINE TEST_MPO()
@@ -201,6 +208,15 @@ SUBROUTINE TEST_MPO()
 	CALL TEN_PRINT(T)
 	CALL TEN_SAVE('T',T)
 END SUBROUTINE TEST_MPO
+! test DMRG
+SUBROUTINE TEST_DMRG()
+	USE MODEL
+	TYPE(TENSOR) :: T, G, L
+	
+	CALL SET_MPO(T)
+	WRITE (*,'(A,I3,A,F5.2,A,F5.2,A)') 'DCUT = ', DCUT, ', THETA = ', THETA/PI, '*PI, BETA = ', BETA
+	CALL DMRG(T, G, L)
+END SUBROUTINE TEST_DMRG
 ! end of module TASK
 END MODULE TASK
 ! ############### PROGRAM ##################
@@ -209,6 +225,7 @@ PROGRAM MAIN
 	INTEGER :: I
 	PRINT *, '------------ DMRG -------------'
 		
-	CALL TEST()
-!	CALL TEST_MPO()
+!	CALL TEST()
+	CALL TEST_MPO()
+!	CALL TEST_DMRG()
 END PROGRAM MAIN
