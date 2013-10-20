@@ -8,8 +8,8 @@ END MODULE CONST
 ! ############### MODEL ###################
 MODULE MODEL
 	USE CONST
-	REAL :: BETA = 0.
-	REAL :: THETA = PI
+	REAL :: BETA = 0.440687
+	REAL :: THETA = 0.*PI
 	INTEGER :: DCUT = 8
 END MODULE MODEL
 ! ############## PHYSICS ###################
@@ -32,13 +32,14 @@ SUBROUTINE SET_MPO(T)
 	X =  TENSOR([2,2,2,2],[0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15],[EXP(2*B),EXP(Q/4.),EXP(Q/4.),EXP(Z0),EXP(Q/4.),EXP(-2*B - Q/2.),EXP(Z0),EXP(-Q/4.),EXP(Q/4.),EXP(Z0),EXP(-2*B + Q/2.),EXP(-Q/4.),EXP(Z0),EXP(-Q/4.),EXP(-Q/4.),EXP(2*B)])
 ! ++++++++++++++++++++++++++++++++++++++++++++
 	! symm SVD of X to unitary U and diagonal S
-	CALL SYSVD(X,[1,4],[2,3],U,S)
+	CALL SYSVD(X,[1,4],[3,2],U,S)
 	S%VALS = SQRT(S%VALS) ! split S to half
 	U = TEN_PROD(U,S,[3],[1]) ! attach the half S to U
 	! set Y tensor
 	Y = EYE_TEN([2,2,2])
 	! contract U from both sides with Y
-	T = TEN_PROD(TEN_PROD(Y,U,[2],[1]),TEN_PROD(Y,U,[2],[2]),[2,3],[3,2])
+	U = TEN_PROD(Y,U,[1],[2])
+	T = TEN_PROD(U,U,[1,3],[3,1])
 END SUBROUTINE SET_MPO
 ! ----------- DMRG -----------
 ! DMRG Kernel
@@ -55,18 +56,18 @@ SUBROUTINE DMRG(T, G, L)
 	COMPLEX :: TVAL
 	INTEGER :: ITER
 	! parameters
-	INTEGER, PARAMETER :: MAX_ITER = 2
+	INTEGER, PARAMETER :: MAX_ITER = 20
 	
 	! initialize tensors
-	CALL DMRG_INITIALIZATION(TE, A, LP, LF)
+	CALL DMRG_INITIALIZATION(T, TE, A, LP, LF)
 	DO ITER = 1, MAX_ITER
 		! estimate starting state
 		W = STATE_ESTIMATE(A, LP, LF)
 		LP = LF ! LP has been used, update to LF
 		! construct system T tensor
-		CALL TEN_SAVE('TE',TE)
+!		CALL TEN_SAVE('TE',TE)
 		TS = MAKE_SYSTEM(TE, T)
-		CALL TEN_SAVE('TS',TEN_FLATTEN(TS,[1,3,5,7,0,2,4,6,8]))
+!		CALL TEN_SAVE('TS',TEN_FLATTEN(TS,[1,3,5,7,0,2,4,6,8]))
 		! anneal the state W to the fixed point of TS
 !		IF (ITER == 2) THEN
 !			CALL TEN_PRINT(TS)
@@ -84,13 +85,18 @@ SUBROUTINE DMRG(T, G, L)
 	END DO
 END SUBROUTINE DMRG
 ! initialization routine
-SUBROUTINE DMRG_INITIALIZATION(TE, A, LP, LF)
+SUBROUTINE DMRG_INITIALIZATION(T, TE, A, LP, LF)
 ! called by DMRG
 	USE CONST
+	TYPE(TENSOR), INTENT(IN) :: T
 	TYPE(TENSOR), INTENT(OUT) :: TE, A, LP, LF
+	! local variables
+	INTEGER :: DP, DI, I
 	
-	TE = TENSOR([1,4,1,4],[0,5,10,15],[Z1,Z1,Z1,Z1])
-	A  = TENSOR([1,2,1],[0,1],[Z1,Z1]/SQRT(2.))
+	DP = T%DIMS(1)
+	DI = T%DIMS(2)
+	TE = TENSOR([1,DI,1,DI],[(I,I=0,DI-1)]*(DI+1),[(Z1,I=1,DI)])
+	A  = TENSOR([1,DP,1],[(I,I=0,DP-1)],[(Z1/SQRT(2.),I=1,DP)])
 	LP = TENSOR([1,1],[0],[Z1])
 	LF = LP
 END SUBROUTINE DMRG_INITIALIZATION
@@ -195,7 +201,7 @@ SUBROUTINE TEST()
 	TYPE(TENSOR) :: T, TE, A, LP, LF, TS
 	
 	CALL SET_MPO(T)
-	CALL DMRG_INITIALIZATION(TE,A,LP,LF)
+	CALL DMRG_INITIALIZATION(T,TE,A,LP,LF)
 	TS = MAKE_SYSTEM(TE, T)
 	TS = TEN_FLATTEN(TS,[1,3,7,5,0,2,4,8,6])
 	CALL TEN_SAVE('TS',TS)
@@ -205,8 +211,8 @@ SUBROUTINE TEST_MPO()
 	TYPE(TENSOR) :: T
 	
 	CALL SET_MPO(T)
-	CALL TEN_PRINT(T)
-	CALL TEN_SAVE('T',T)
+!	CALL TEN_PRINT(T)
+	CALL TEN_SAVE('T',TEN_TRANS(T,[2,4,1,3]))
 END SUBROUTINE TEST_MPO
 ! test DMRG
 SUBROUTINE TEST_DMRG()
@@ -226,6 +232,6 @@ PROGRAM MAIN
 	PRINT *, '------------ DMRG -------------'
 		
 !	CALL TEST()
-	CALL TEST_MPO()
-!	CALL TEST_DMRG()
+!	CALL TEST_MPO()
+	CALL TEST_DMRG()
 END PROGRAM MAIN

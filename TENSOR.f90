@@ -1182,54 +1182,36 @@ FUNCTION NORM(ZS) RESULT(X)
 		DEALLOCATE(H) ! free H
 	END IF
 END FUNCTION NORM
-! matrix inverse square root by Denman-Beavers iteration
-FUNCTION INV_SQRT(MAT)
-! input: MAT must be a square matrix
-! output: INV_SQRT(MAT) = MAT^(-1/2)
-    IMPLICIT NONE
-    COMPLEX, INTENT(IN) :: MAT(:,:)
-    INTEGER :: N, I, MAX_ITER
-    REAL    :: EPS, DIFF
-    COMPLEX :: MAT_SQRT(SIZE(MAT,1),SIZE(MAT,2))
-    COMPLEX :: INV_SQRT(SIZE(MAT,1),SIZE(MAT,2))
-    COMPLEX :: INV_SQRO(SIZE(MAT,1),SIZE(MAT,2))
-    
-    N = SIZE(MAT,1) ! dim of MAT
-    MAT_SQRT = MAT ! copy MAT to MAT_SQRT
-    ! set INV_SQRT to identity matrix
-    INV_SQRT = (0.,0.)
-    FORALL (I = 1:N) INV_SQRT(I,I) = (1.,0.)
-    ! start Denman-Beavers iteration
-    MAX_ITER = 50 ! set max iteration to prevent infinite loop
-    EPS = 1.D-15*SIZE(MAT) ! error tolerance
-    DO I = 1, MAX_ITER
-        INV_SQRO = (INV_SQRT + INV(MAT_SQRT))/2
-        MAT_SQRT = (MAT_SQRT + INV(INV_SQRT))/2
-        ! check convergence
-        IF (SUM(ABS(INV_SQRO - INV_SQRT)) < EPS) EXIT
-        ! update INV_SQRT
-        INV_SQRT = INV_SQRO
-    END DO
-    IF (I == MAX_ITER) PRINT *,'Warning: INV_SQRT::fails to converge.'
+! matrix inverse square root by Schur decomposition
+FUNCTION INV_SQRT(A) RESULT(B)
+! input: A must be a square matrix
+! output: INV_SQRT(A) = A^(-1/2)
+	USE MATHIO
+	COMPLEX, INTENT(IN) :: A(:,:)
+	COMPLEX, ALLOCATABLE :: B(:,:)
+	! local variable
+	LOGICAL :: SEL
+	LOGICAL :: BWORK(0)
+	INTEGER :: I, N, SDIM, LDVS, LWORK, INFO
+	COMPLEX, ALLOCATABLE :: W(:), VS(:,:), WORK(:)
+	REAL, ALLOCATABLE :: RWORK(:)
+	
+	N = SIZE(A,1) ! dim of A
+	B = A ! move data to B
+	! allocate for space
+	LDVS = N
+	LWORK = 65*N
+	ALLOCATE(W(N),VS(LDVS,N),WORK(LWORK),RWORK(N))
+	! call LAPACK to perform Schur decomposition
+	CALL ZGEES('V','N',SEL,N,B,N,SDIM,W,VS,LDVS,WORK,LWORK,RWORK,BWORK,INFO)
+	! now W stores the eigen values
+	! construct inverse square root matrix
+	FORALL (I=1:N)
+		B(I,I) = (1.,0.)/SQRT(B(I,I))
+	END FORALL
+	! restore the original basis
+	B = MATMUL(MATMUL(VS,B),CONJG(TRANSPOSE(VS)))
 END FUNCTION INV_SQRT
-! matrix inversion by LU decomposition
-FUNCTION INV(MAT)
-! input: MAT must be a square mat
-! output: INV = MAT^(-1)
-	IMPLICIT NONE
-    COMPLEX, INTENT(IN) :: MAT(:,:)
-    COMPLEX :: INV(SIZE(MAT,1),SIZE(MAT,2))
-    INTEGER :: N, INFO, IPIV(SIZE(MAT,1))
-    COMPLEX :: WORK(64*SIZE(MAT,1))
-    
-    N = SIZE(MAT,1) ! dim of MAT
-    INV = MAT ! copy MAT to INV
-    ! in-place LU factorization of INV
-    ! call LAPACK
-    CALL ZGETRF(N, N, INV, N, IPIV, INFO)
-    IF (INFO>0) PRINT *,"Warning: INV::inversion of singular matrix."
-    CALL ZGETRI(N, INV, N, IPIV, WORK, 64*N, INFO)
-END FUNCTION INV
 ! I/O System -------------------------------
 ! tensor print
 SUBROUTINE TEN_PRINT(TEN)
