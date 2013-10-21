@@ -8,8 +8,9 @@ END MODULE CONST
 ! ############### MODEL ###################
 MODULE MODEL
 	USE CONST
-	REAL :: BETA = 0.440687
-	REAL :: THETA = 0.*PI
+!	REAL :: BETA = 0.440687
+	REAL :: BETA = 0.
+	REAL :: THETA = 1.*PI
 	INTEGER :: DCUT = 8
 END MODULE MODEL
 ! ############## PHYSICS ###################
@@ -40,23 +41,24 @@ SUBROUTINE SET_MPO(T)
 	! contract U from both sides with Y
 	U = TEN_PROD(Y,U,[1],[2])
 	T = TEN_PROD(U,U,[1,3],[3,1])
+	T%VALS = T%VALS/2/EXP(ABS(BETA))
 END SUBROUTINE SET_MPO
 ! ----------- DMRG -----------
 ! DMRG Kernel
-SUBROUTINE DMRG(T, G, L)
+SUBROUTINE DMRG(T, M)
 ! perform infinite-size DMRG to find the max MPS of MPO
 ! input: T - MPO tensor
-! output: G - entanglement tensor, L - Schmidt spectrum
+! output: M - MPS tensor
 	USE MODEL
 	TYPE(TENSOR), INTENT(IN)  :: T ! input MPO tensor
-	TYPE(TENSOR), INTENT(OUT) :: G, L ! output MPS tensors
+	TYPE(TENSOR), INTENT(OUT) :: M ! output MPS tensors
 	! local tensors
 	TYPE(TENSOR) :: TE, A, LP, LF, W, TS
 	! local variables
 	COMPLEX :: TVAL
 	INTEGER :: ITER
 	! parameters
-	INTEGER, PARAMETER :: MAX_ITER = 20
+	INTEGER, PARAMETER :: MAX_ITER = 1
 	
 	! initialize tensors
 	CALL DMRG_INITIALIZATION(T, TE, A, LP, LF)
@@ -67,12 +69,8 @@ SUBROUTINE DMRG(T, G, L)
 		! construct system T tensor
 !		CALL TEN_SAVE('TE',TE)
 		TS = MAKE_SYSTEM(TE, T)
-!		CALL TEN_SAVE('TS',TEN_FLATTEN(TS,[1,3,5,7,0,2,4,6,8]))
+		CALL TEN_SAVE('TS',TEN_FLATTEN(TS,[1,3,5,7,0,2,4,6,8]))
 		! anneal the state W to the fixed point of TS
-!		IF (ITER == 2) THEN
-!			CALL TEN_PRINT(TS)
-!			CALL TEN_PRINT(W)
-!		END IF
 		TVAL = ANNEAL(TS, W)
 		WRITE (*,'(A,2G12.4)') 'Tval = ', REAL(TVAL), IMAG(TVAL)
 		! SYSVD decompose W to A and LF
@@ -83,6 +81,12 @@ SUBROUTINE DMRG(T, G, L)
 		! now LP and LF holds the successive Schmidt spectrums
 		WRITE (*,'(8F7.3)') ABS(LF%VALS)**2
 	END DO
+	! suppose the entanglement spectrum converges
+	! construct the MPS tensor
+	LP%VALS = Z1/LP%VALS
+	A = TEN_PROD(LP,A,[2],[1])
+	LF%VALS = SQRT(LF%VALS)
+	M = TEN_PROD(TEN_PROD(LF,A,[2],[1]),LF,[3],[1])
 END SUBROUTINE DMRG
 ! initialization routine
 SUBROUTINE DMRG_INITIALIZATION(T, TE, A, LP, LF)
@@ -136,6 +140,70 @@ FUNCTION ANNEAL(TS, W) RESULT (TVAL)
 	TYPE(TENSOR), INTENT(IN) :: TS
 	TYPE(TENSOR), INTENT(INOUT) :: W
 	COMPLEX :: TVAL
+	! local variables
+	INTEGER :: DIM, I, ITER
+	INTEGER, ALLOCATABLE :: LINDS(:), RINDS(:), WINDS(:)
+	COMPLEX, ALLOCATABLE :: W0(:), W1(:)
+	COMPLEX :: TVAL0
+	! parameters
+	INTEGER, PARAMETER :: MAX_ITER = 500 ! max interation
+	REAL, PARAMETER :: TOL = 1.E-12 ! allowed error of Tval
+	
+	! unpack data from tensor
+	! collect leg-combined inds in TS and W
+	LINDS = COLLECT_INDS(TS,[2,4,6,8])
+	RINDS = COLLECT_INDS(TS,[1,3,5,7])
+	WINDS = COLLECT_INDS(W,[1,2,3,4])
+	! cal total dim of W
+	DIM = PRODUCT(W%DIMS)
+	! allocate vector for W
+	ALLOCATE(W0(0:DIM-1), W1(0:DIM-1))
+	! dump data from tensor W to vector W0
+	W0 = Z0
+	FORALL (I = 1:SIZE(W%INDS))
+		W0(WINDS(I)) = W%VALS(I)
+	END FORALL
+	! use power iteration algorithm
+	TVAL0 = Z0
+	DO ITER = 1, MAX_ITER
+		! apply TS to W0 -> W1
+		W1 = Z0
+		DO I = 1,SIZE(TS%INDS)
+			W1(RINDS(I)) = W1(RINDS(I)) + TS%VALS(I)*W0(LINDS(I))
+		END DO
+		! cal the diagonal val
+!		TVAL = (W1(RINDS(1))/ABS(W1(RINDS(1))))*SQRT(SUM(ABS(W1)**2))
+		TVAL = SQRT(SUM(ABS(W1)**2))
+		! perform normalization
+		W1 = W1/TVAL
+		! stabilize update and renormalize
+		W0 = W0 + W1
+		W0 = W0/SQRT(SUM(ABS(W0)**2))
+		! check convergence
+		IF (ABS((TVAL-TVAL0)/TVAL) < TOL) THEN ! if relative error < tol
+			! power iteration has converge
+			EXIT ! exit power interation
+		ELSE ! not converge, next iteration
+			TVAL0 = TVAL ! save TVAL to TVAL0
+		END IF
+	END DO
+	! if exceed max iteration
+	IF (ITER > MAX_ITER) THEN !then power iteration has not converge
+		WRITE (*,'(A)') 'ANNEAL::fcov: Power iteration failed to converge, eigen state has not been found.'
+	END IF
+	! reconstruct W tensor for output
+	W%INDS = [(I,I=0,DIM-1)]
+	W%VALS = W0
+!	CALL TEN_PRINT(W)
+END FUNCTION ANNEAL
+! anneal the state W to fix point of TS
+FUNCTION ANNEAL0(TS, W) RESULT (TVAL)
+! input: TS - system transfer tensor, W - state
+! on output: W  is modified to the fixed point state
+	USE CONST
+	TYPE(TENSOR), INTENT(IN) :: TS
+	TYPE(TENSOR), INTENT(INOUT) :: W
+	COMPLEX :: TVAL
 	! local tensors
 	TYPE(TENSOR) :: W1
 	! local variables
@@ -167,7 +235,7 @@ FUNCTION ANNEAL(TS, W) RESULT (TVAL)
 	END DO
 	! if exceed max iteration, then power iteration has not converge
 	WRITE (*,'(A)') 'ANNEAL::fcov: Power iteration failed to converge, eigen state has not been found.'
-END FUNCTION ANNEAL
+END FUNCTION ANNEAL0
 ! update TE given T and A
 SUBROUTINE UPDATE_ENVIRONMENT(TE, T, A)
 ! input: TE - environment tensor, T - site tensor (MPO), A - projector
@@ -187,6 +255,23 @@ SUBROUTINE UPDATE_ENVIRONMENT(TE, T, A)
 !	END IF
 	TE = TE1
 END SUBROUTINE UPDATE_ENVIRONMENT
+! ----------- MEASURE -----------
+! correlation of MPS
+SUBROUTINE CORR(M,O1,O2)
+! input: M - MPS tensor, O1, O2 -  observables
+! output:
+	TYPE(TENSOR), INTENT(IN) :: M, O1, O2
+	! local tensors
+	TYPE(TENSOR) :: MC, M0, M1, M2
+	
+	MC = TEN_CONJG(M)
+	M0 = TEN_FLATTEN(TEN_PROD(MC,M,[2],[2]),[1,3,0,2,4])
+	M1 = TEN_FLATTEN(TEN_PROD(MC,TEN_PROD(O1,M,[2],[2]),[2],[1]),[1,3,0,2,4])
+	M2 = TEN_FLATTEN(TEN_PROD(MC,TEN_PROD(O2,M,[2],[2]),[2],[1]),[1,3,0,2,4])
+	CALL TEN_SAVE('M0',M0)
+	CALL TEN_SAVE('M1',M1)
+	CALL TEN_SAVE('M2',M2)
+END SUBROUTINE CORR
 ! end of module PHYSICS
 END MODULE PHYSICS
 ! ################ TASK ####################
@@ -217,11 +302,12 @@ END SUBROUTINE TEST_MPO
 ! test DMRG
 SUBROUTINE TEST_DMRG()
 	USE MODEL
-	TYPE(TENSOR) :: T, G, L
+	TYPE(TENSOR) :: T, M
 	
 	CALL SET_MPO(T)
 	WRITE (*,'(A,I3,A,F5.2,A,F5.2,A)') 'DCUT = ', DCUT, ', THETA = ', THETA/PI, '*PI, BETA = ', BETA
-	CALL DMRG(T, G, L)
+	CALL DMRG(T, M)
+	CALL CORR(M, PAULI_MAT([3]), PAULI_MAT([3]))
 END SUBROUTINE TEST_DMRG
 ! end of module TASK
 END MODULE TASK
