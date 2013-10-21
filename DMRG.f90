@@ -9,8 +9,8 @@ END MODULE CONST
 MODULE MODEL
 	USE CONST
 !	REAL :: BETA = 0.440687
-	REAL :: BETA = 0.
-	REAL :: THETA = 1.*PI
+	REAL :: BETA = 0.5
+	REAL :: THETA = 0.*PI
 	INTEGER :: DCUT = 8
 END MODULE MODEL
 ! ############## PHYSICS ###################
@@ -41,7 +41,7 @@ SUBROUTINE SET_MPO(T)
 	! contract U from both sides with Y
 	U = TEN_PROD(Y,U,[1],[2])
 	T = TEN_PROD(U,U,[1,3],[3,1])
-	T%VALS = T%VALS/2/EXP(ABS(BETA))
+!	T%VALS = T%VALS/2/EXP(ABS(BETA))
 END SUBROUTINE SET_MPO
 ! ----------- DMRG -----------
 ! DMRG Kernel
@@ -58,7 +58,7 @@ SUBROUTINE DMRG(T, M)
 	COMPLEX :: TVAL
 	INTEGER :: ITER
 	! parameters
-	INTEGER, PARAMETER :: MAX_ITER = 1
+	INTEGER, PARAMETER :: MAX_ITER = 10
 	
 	! initialize tensors
 	CALL DMRG_INITIALIZATION(T, TE, A, LP, LF)
@@ -100,7 +100,8 @@ SUBROUTINE DMRG_INITIALIZATION(T, TE, A, LP, LF)
 	DP = T%DIMS(1)
 	DI = T%DIMS(2)
 	TE = TENSOR([1,DI,1,DI],[(I,I=0,DI-1)]*(DI+1),[(Z1,I=1,DI)])
-	A  = TENSOR([1,DP,1],[(I,I=0,DP-1)],[(Z1/SQRT(2.),I=1,DP)])
+!	A  = TENSOR([1,DP,1],[(I,I=0,DP-1)],[(Z1/SQRT(2.),I=1,DP)])
+	A  = TENSOR([1,DP,1],[0],[Z1])
 	LP = TENSOR([1,1],[0],[Z1])
 	LF = LP
 END SUBROUTINE DMRG_INITIALIZATION
@@ -134,6 +135,104 @@ FUNCTION MAKE_SYSTEM(TE, T) RESULT (TS)
 END FUNCTION MAKE_SYSTEM
 ! anneal the state W to fix point of TS
 FUNCTION ANNEAL(TS, W) RESULT (TVAL)
+! input: TS - system transfer tensor, W - state
+! on output: W  is modified to the fixed point state
+	USE MATHIO
+	USE CONST
+	TYPE(TENSOR), INTENT(IN) :: TS
+	TYPE(TENSOR), INTENT(INOUT) :: W
+	COMPLEX :: TVAL
+	! parameters
+	INTEGER, PARAMETER :: N = 16 ! Krylov space dimension
+	INTEGER, PARAMETER :: MAX_ITER = 50 ! max interation
+	REAL, PARAMETER :: TOL = 1.E-12 ! allowed error of Tval
+	! local variables
+	INTEGER :: DIM, I, J, K, ITER, INFO
+	INTEGER, ALLOCATABLE :: LINDS(:), RINDS(:), WINDS(:)
+	COMPLEX, ALLOCATABLE :: Q(:,:)
+	COMPLEX :: TVAL0, H(N,N), E(N),VL(0,0),VR(N,N),WORK(65*N)
+	REAL :: RWORK(2*N)
+	LOGICAL :: EXH
+	
+	! unpack data from tensor
+	! collect leg-combined inds in TS and W
+	LINDS = COLLECT_INDS(TS,[2,4,6,8])
+	RINDS = COLLECT_INDS(TS,[1,3,5,7])
+	WINDS = COLLECT_INDS(W,[1,2,3,4])
+	! cal total dim of W
+	DIM = PRODUCT(W%DIMS)
+	! allocate Krylov space
+	ALLOCATE(Q(0:DIM-1,N))
+	! dump data from tensor W to vector Q(:,1)
+	Q(:,1) = Z0
+	FORALL (I = 1:SIZE(W%INDS))
+		Q(WINDS(I),1) = W%VALS(I)
+	END FORALL
+	! prepare to start Arnoldi iteration
+	TVAL0 = Z0
+	EXH = .FALSE. ! space exhausted flag
+	! use Arnoldi iteration algorithm
+	DO ITER = 1, MAX_ITER
+		H = Z0 ! initialize Heisenberg matrix
+		! construct Krylov space
+		DO K = 2, N
+			! apply TS to Q(:,K-1) -> Q(:,K)
+			Q(:,K) = Z0
+			DO I = 1,SIZE(TS%INDS)
+				Q(RINDS(I),K) = Q(RINDS(I),K) + TS%VALS(I)*Q(LINDS(I),K-1)
+			END DO
+			! orthogonalization by stabilized Gram–Schmidt process
+			DO J = 1, K-1
+				H(J,K-1) = DOT_PRODUCT(Q(:,J),Q(:,K))
+				Q(:,K) = Q(:,K) - H(J,K-1)*Q(:,J)
+			END DO
+			! cal the norm of residual vector
+			H(K,K-1) = SQRT(DOT_PRODUCT(Q(:,K),Q(:,K)))
+			! if it is vanishing, the Arnoldi iteration has broken down
+			IF (ABS(H(K,K-1))<TOL) THEN
+				EXH = .TRUE.
+				EXIT ! exit the iteration, stop construction of Krylov space
+			END IF
+			! otherwise, normalize the residual vect to a new basis vect
+			Q(:,K) = Q(:,K)/H(K,K-1)
+		END DO !K
+!		CALL EXPORT('Q',Q)
+!		CALL EXPORT('H',H)
+		! now the Heisenberg matrix has been constructed
+		! the action of TS is represented on the basis Q as H
+		! call LAPACK to diagonalize H
+		CALL ZGEEV('N','V',N,H,N,E,VL,1,VR,N,WORK,65*N,RWORK,INFO)
+!		PRINT *, E
+!		CALL EXPORT('VR',VR)
+		! now E holds the eigen vals, and VR the eigen vects
+		! find the max abs eigen val
+		I = MAXLOC(ABS(E),1,IMAG(E)>-TOL/2)
+		TVAL = E(I) ! save it in Tval
+		! reorganize the eigen vector
+		Q(:,1) = MATMUL(Q,VR(:,I)) ! save to 1st col of Q
+		Q(:,1) = Q(:,1)/SQRT(DOT_PRODUCT(Q(:,1),Q(:,1))) ! normalize
+!		CALL EXPORT('Q1',Q(:,1))
+		! check convergence
+		! if space exhausted, or relative error < tol
+		IF (EXH .OR. ABS((TVAL-TVAL0)/TVAL) < TOL) THEN
+			! Arnoldi iteration has converge
+			EXIT ! exit Arnoldi interation
+		ELSE ! not converge, next iteration
+			TVAL0 = TVAL ! save TVAL to TVAL0
+			PRINT *, TVAL
+		END IF
+	END DO ! next Arnoldi interation
+	! if exceed max iteration
+	IF (ITER > MAX_ITER) THEN !then power iteration has not converge
+		WRITE (*,'(A)') 'ANNEAL::fcov: Arnoldi iteration failed to converge, eigen state has not been found.'
+	END IF
+	! reconstruct W tensor for output
+	W%INDS = [(I,I=0,DIM-1)]
+	W%VALS = Q(:,1)
+!	CALL TEN_PRINT(W)
+END FUNCTION ANNEAL
+! anneal the state W to fix point of TS
+FUNCTION ANNEAL1(TS, W) RESULT (TVAL)
 ! input: TS - system transfer tensor, W - state
 ! on output: W  is modified to the fixed point state
 	USE CONST
@@ -195,7 +294,7 @@ FUNCTION ANNEAL(TS, W) RESULT (TVAL)
 	W%INDS = [(I,I=0,DIM-1)]
 	W%VALS = W0
 !	CALL TEN_PRINT(W)
-END FUNCTION ANNEAL
+END FUNCTION ANNEAL1
 ! anneal the state W to fix point of TS
 FUNCTION ANNEAL0(TS, W) RESULT (TVAL)
 ! input: TS - system transfer tensor, W - state
