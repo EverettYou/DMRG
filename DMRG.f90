@@ -9,9 +9,9 @@ END MODULE CONST
 MODULE MODEL
 	USE CONST
 !	REAL :: BETA = 0.440687
-	REAL :: BETA = 0.5
+	REAL :: BETA = 0.3
 	REAL :: THETA = 0.*PI
-	INTEGER :: DCUT = 8
+	INTEGER :: DCUT = 6
 END MODULE MODEL
 ! ############## PHYSICS ###################
 MODULE PHYSICS
@@ -44,85 +44,145 @@ SUBROUTINE SET_MPO(T)
 !	T%VALS = T%VALS/2/EXP(ABS(BETA))
 END SUBROUTINE SET_MPO
 ! ----------- DMRG -----------
-! DMRG Kernel
-SUBROUTINE DMRG(T, M)
+! iDMRG Kernel
+SUBROUTINE IDMRG(T, L, TL, AL, S)
 ! perform infinite-size DMRG to find the max MPS of MPO
-! input: T - MPO tensor
-! output: M - MPS tensor
+! input: T - MPO tensor, L - system size
+! output: TL - compressed transfer matrix at each level
+!         AL - projection operator in TL
+!         S  - final entanglement tensor 
 	USE MODEL
 	TYPE(TENSOR), INTENT(IN)  :: T ! input MPO tensor
-	TYPE(TENSOR), INTENT(OUT) :: M ! output MPS tensors
+	INTEGER, INTENT(IN)       :: L ! system size
+	TYPE(TENSOR), INTENT(OUT) :: TL(0:L), AL(0:L), S
 	! local tensors
-	TYPE(TENSOR) :: TE, A, LP, LF, W, TS
+	TYPE(TENSOR) :: S0, W, TS
 	! local variables
 	COMPLEX :: TVAL
-	INTEGER :: ITER
-	! parameters
-	INTEGER, PARAMETER :: MAX_ITER = 10
-	
-	! initialize tensors
-	CALL DMRG_INITIALIZATION(T, TE, A, LP, LF)
-	DO ITER = 1, MAX_ITER
-		! estimate starting state
-		W = STATE_ESTIMATE(A, LP, LF)
-		LP = LF ! LP has been used, update to LF
-		! construct system T tensor
-!		CALL TEN_SAVE('TE',TE)
-		TS = MAKE_SYSTEM(TE, T)
-		CALL TEN_SAVE('TS',TEN_FLATTEN(TS,[1,3,5,7,0,2,4,6,8]))
-		! anneal the state W to the fixed point of TS
-		TVAL = ANNEAL(TS, W)
-		WRITE (*,'(A,2G12.4)') 'Tval = ', REAL(TVAL), IMAG(TVAL)
-		! SYSVD decompose W to A and LF
-		CALL SYSVD(W,[1,2],[3,4],A,LF,DCUT)
-		! update environment tensor TE
-		CALL UPDATE_ENVIRONMENT(TE, T, A)
-		! check convergence
-		! now LP and LF holds the successive Schmidt spectrums
-		WRITE (*,'(8F7.3)') ABS(LF%VALS)**2
-	END DO
-	! suppose the entanglement spectrum converges
-	! construct the MPS tensor
-	LP%VALS = Z1/LP%VALS
-	A = TEN_PROD(LP,A,[2],[1])
-	LF%VALS = SQRT(LF%VALS)
-	M = TEN_PROD(TEN_PROD(LF,A,[2],[1]),LF,[3],[1])
-END SUBROUTINE DMRG
-! initialization routine
-SUBROUTINE DMRG_INITIALIZATION(T, TE, A, LP, LF)
-! called by DMRG
-	USE CONST
-	TYPE(TENSOR), INTENT(IN) :: T
-	TYPE(TENSOR), INTENT(OUT) :: TE, A, LP, LF
-	! local variables
 	INTEGER :: DP, DI, I
 	
-	DP = T%DIMS(1)
-	DI = T%DIMS(2)
-	TE = TENSOR([1,DI,1,DI],[(I,I=0,DI-1)]*(DI+1),[(Z1,I=1,DI)])
-!	A  = TENSOR([1,DP,1],[(I,I=0,DP-1)],[(Z1/SQRT(2.),I=1,DP)])
-	A  = TENSOR([1,DP,1],[0],[Z1])
-	LP = TENSOR([1,1],[0],[Z1])
-	LF = LP
-END SUBROUTINE DMRG_INITIALIZATION
-! estimate starting state
-FUNCTION STATE_ESTIMATE(A, LP, LF) RESULT(W)
+	! initialize tensors
+	DP = T%DIMS(1) ! get physical dim
+	DI = T%DIMS(2) ! get MPO internal dim
+	TL(0) = TENSOR([1,DI,1,DI],[(I,I=0,DI-1)]*(DI+1),[(Z1,I=1,DI)])
+	AL(0) = TENSOR([1,DP,1],[(I,I=0,DP-1)],[(Z1/SQRT(2.),I=1,DP)])
+	S0 = TENSOR([1,1],[0],[Z1])
+	S  = S0
+	! start iDMRG iteration, collect tensors
+	DO I = 1, L ! loop over all levels
+		! estimate the trial state
+		W = STATE2(AL(I-1), S0, S)
+		S0 = S ! S0 has been used, update to S
+		! construct system tensor TS
+		TS = TS4(TL(I-1), T)
+		! anneal the state W to the fixed point of TS
+		TVAL = ANNEAL(TS, W, [1,3,5,7],[2,4,6,8],[1,2,3,4])
+		! SYSVD decompose W to A and S
+		CALL SYSVD(W,[1,2],[3,4],AL(I),S,DCUT)
+		! construct new environment tensor
+		TL(I) = GET_TE(TL(I-1), T, AL(I))
+		WRITE (*,'(I3,A,G10.4,A,G10.4,A,100F6.3)') I, ': (', REALPART(TVAL),',', IMAGPART(TVAL), ') S:', REALPART(S%VALS)
+	END DO ! I
+END SUBROUTINE IDMRG
+! fDMRG Kernel
+SUBROUTINE FDMRG(T, L, TL, AL, S)
+! input: T - MPO tensor, L - system size
+! inout: initial TL, AL, S are obtained from IDMRG
+!        on return, TL, AL, S are updated
+	TYPE(TENSOR), INTENT(IN) :: T ! MPO tensor
+	INTEGER, INTENT(IN)      :: L ! system size
+	TYPE(TENSOR), INTENT(INOUT) :: TL(0:L), AL(0:L), S
+	! local tensors
+	TYPE(TENSOR) :: M, TS, B
+	! local variables
+	INTEGER :: DIMO, DIMS, I
+	COMPLEX :: TVAL
+	
+	! initialize trial state
+	M = STATE1(AL(L),S)
+	! construct initial environment tensor
+	DIMO = T%DIMS(2) ! get MPO internal dim
+	DIMS = S%DIMS(1) ! get MPS internal dim
+	TL(0) = TEN_TRANS(TEN_PROD(EYE_TEN([DIMO,DIMO]),EYE_TEN([DIMS,DIMS])),[3,1,4,2])
+	! start fDMRG iteration
+	DO I = 1, L ! sweep over the lattice
+		! make system tensor TS
+		TS = TS3(TL(L-I), T, TL(I-1))
+		! anneal M to the ground sate of TS
+		TVAL = ANNEAL(TS, M, [1,3,5],[2,4,6],[1,2,3])
+		! split M to A and B, also return S
+		CALL M2AB(M, AL(I), B, S)
+		! construct new environment tensor
+		TL(I) = GET_TE(TL(I-1), T, AL(I))
+		! estimate next trial state
+		IF (I < L) M = STATE1(AL(L-I), B)
+		WRITE (*,'(I3,A,G10.4,A,G10.4,A,100F6.3)') I, ': (', REALPART(TVAL),',', IMAGPART(TVAL), ') S:', REALPART(S%VALS)
+	END DO
+END SUBROUTINE FDMRG
+! fDMRG Kernel
+SUBROUTINE FDMRG1(T, L, TL, AL, S)
+! input: T - MPO tensor, L - system size
+! inout: initial TL, AL, S are obtained from IDMRG
+!        on return, TL, AL, S are updated
+	TYPE(TENSOR), INTENT(IN) :: T ! MPO tensor
+	INTEGER, INTENT(IN)      :: L ! system size
+	TYPE(TENSOR), INTENT(INOUT) :: TL(0:L), AL(0:L), S
+	! local tensors
+	TYPE(TENSOR) :: M, TS, B, TN(0:L), AN(0:L)
+	! local variables
+	INTEGER :: DIMO, DIMS, I
+	COMPLEX :: TVAL
+	
+	! initialize trial state
+	M = STATE1(AL(L),S)
+	! construct initial environment tensor
+	DIMO = T%DIMS(2) ! get MPO internal dim
+	DIMS = S%DIMS(1) ! get MPS internal dim
+	TN(0) = TEN_TRANS(TEN_PROD(EYE_TEN([DIMO,DIMO]),EYE_TEN([DIMS,DIMS])),[3,1,4,2])
+	! start fDMRG iteration
+	DO I = 1, L ! sweep over the lattice
+		! make system tensor TS
+		TS = TS3(TL(L-I), T, TN(I-1))
+		! anneal M to the ground sate of TS
+		TVAL = ANNEAL(TS, M, [1,3,5],[2,4,6],[1,2,3])
+		! split M to A and B, also return S
+		CALL M2AB(M, AN(I), B, S)
+		! construct new environment tensor
+		TN(I) = GET_TE(TN(I-1), T, AN(I))
+		! estimate next trial state
+		IF (I < L) M = STATE1(AL(L-I), B)
+		WRITE (*,'(I3,A,G10.4,A,G10.4,A,100F6.3)') I, ': (', REALPART(TVAL),',', IMAGPART(TVAL), ') S:', REALPART(S%VALS)
+	END DO
+	! move data
+	TL = TN
+	AL = AN
+END SUBROUTINE FDMRG1
+! estimate 2-site trial state
+FUNCTION STATE2(A, S0, S) RESULT(W)
 	USE CONST
-	TYPE(TENSOR), INTENT(IN) :: A, LP, LF
+	TYPE(TENSOR), INTENT(IN) :: A, S0, S
 	TYPE(TENSOR) :: W
 	! local tensors
-	TYPE(TENSOR) :: LPI, A1
+	TYPE(TENSOR) :: SI, A1
 	
-	! cal LP^(-1/2)
-	LPI = LP ! move data to LPI
-	LPI%VALS = Z1/SQRT(LPI%VALS) ! 1/sqrt
-	! contract LPI and LF into A
-	A1 = TEN_PROD(TEN_PROD(LF,A,[2],[3]),LPI,[2],[1])
+	! cal S0^(-1/2)
+	SI = S0 ! move data to SI
+	SI%VALS = Z1/SQRT(SI%VALS) ! 1/sqrt
+	! contract SI and S into A
+	A1 = TEN_PROD(TEN_PROD(S,A,[2],[3]),SI,[2],[1])
 	! construct W tensor
 	W = TEN_PROD(A1,A1,[3],[3])
-END FUNCTION STATE_ESTIMATE
-! construct system T
-FUNCTION MAKE_SYSTEM(TE, T) RESULT (TS)
+END FUNCTION STATE2
+! estimate 1-site trial state
+FUNCTION STATE1(A, B) RESULT(M)
+	USE CONST
+	TYPE(TENSOR), INTENT(IN) :: A, B
+	TYPE(TENSOR) :: M
+	
+	M = TEN_PROD(A,B,[3],[1])
+END FUNCTION STATE1
+! construct 2-block-2-site system tensor
+FUNCTION TS4(TE, T) RESULT (TS)
 	TYPE(TENSOR), INTENT(IN) :: TE, T
 	TYPE(TENSOR) :: TS
 	! local tensors
@@ -132,15 +192,23 @@ FUNCTION MAKE_SYSTEM(TE, T) RESULT (TS)
 	TB = TEN_PROD(TE,T,[4],[2])
 	! contract block tensor to system tensor
 	TS = TEN_PROD(TB,TB,[2,6],[2,6])
-END FUNCTION MAKE_SYSTEM
+END FUNCTION TS4
+! construct 2-block-1-site system tensor
+FUNCTION TS3(TL, T, TR) RESULT (TS)
+	TYPE(TENSOR), INTENT(IN) :: TL, T, TR
+	TYPE(TENSOR) :: TS
+	
+	TS = TEN_PROD(TEN_PROD(TL,T,[4],[2]),TR,[2,6],[4,2])
+END FUNCTION TS3
 ! anneal the state W to fix point of TS
-FUNCTION ANNEAL(TS, W) RESULT (TVAL)
+FUNCTION ANNEAL(TS, W, LLEGS, RLEGS, WLEGS) RESULT (TVAL)
 ! input: TS - system transfer tensor, W - state
 ! on output: W  is modified to the fixed point state
 	USE MATHIO
 	USE CONST
 	TYPE(TENSOR), INTENT(IN) :: TS
 	TYPE(TENSOR), INTENT(INOUT) :: W
+	INTEGER, INTENT(IN) :: LLEGS(:), RLEGS(:), WLEGS(:) 
 	COMPLEX :: TVAL
 	! parameters
 	INTEGER, PARAMETER :: N = 16 ! Krylov space dimension
@@ -156,9 +224,9 @@ FUNCTION ANNEAL(TS, W) RESULT (TVAL)
 	
 	! unpack data from tensor
 	! collect leg-combined inds in TS and W
-	LINDS = COLLECT_INDS(TS,[2,4,6,8])
-	RINDS = COLLECT_INDS(TS,[1,3,5,7])
-	WINDS = COLLECT_INDS(W,[1,2,3,4])
+	LINDS = COLLECT_INDS(TS,LLEGS)
+	RINDS = COLLECT_INDS(TS,RLEGS)
+	WINDS = COLLECT_INDS(W,WLEGS)
 	! cal total dim of W
 	DIM = PRODUCT(W%DIMS)
 	! allocate Krylov space
@@ -168,6 +236,7 @@ FUNCTION ANNEAL(TS, W) RESULT (TVAL)
 	FORALL (I = 1:SIZE(W%INDS))
 		Q(WINDS(I),1) = W%VALS(I)
 	END FORALL
+	Q(:,1) = Q(:,1)/SQRT(DOT_PRODUCT(Q(:,1),Q(:,1))) ! normalize
 	! prepare to start Arnoldi iteration
 	TVAL0 = Z0
 	EXH = .FALSE. ! space exhausted flag
@@ -179,7 +248,7 @@ FUNCTION ANNEAL(TS, W) RESULT (TVAL)
 			! apply TS to Q(:,K-1) -> Q(:,K)
 			Q(:,K) = Z0
 			DO I = 1,SIZE(TS%INDS)
-				Q(RINDS(I),K) = Q(RINDS(I),K) + TS%VALS(I)*Q(LINDS(I),K-1)
+				Q(LINDS(I),K) = Q(LINDS(I),K) + TS%VALS(I)*Q(RINDS(I),K-1)
 			END DO
 			! orthogonalization by stabilized Gram–Schmidt process
 			DO J = 1, K-1
@@ -196,14 +265,10 @@ FUNCTION ANNEAL(TS, W) RESULT (TVAL)
 			! otherwise, normalize the residual vect to a new basis vect
 			Q(:,K) = Q(:,K)/H(K,K-1)
 		END DO !K
-!		CALL EXPORT('Q',Q)
-!		CALL EXPORT('H',H)
 		! now the Heisenberg matrix has been constructed
 		! the action of TS is represented on the basis Q as H
 		! call LAPACK to diagonalize H
 		CALL ZGEEV('N','V',N,H,N,E,VL,1,VR,N,WORK,65*N,RWORK,INFO)
-!		PRINT *, E
-!		CALL EXPORT('VR',VR)
 		! now E holds the eigen vals, and VR the eigen vects
 		! find the max abs eigen val
 		I = MAXLOC(ABS(E),1,IMAG(E)>-TOL/2)
@@ -211,7 +276,6 @@ FUNCTION ANNEAL(TS, W) RESULT (TVAL)
 		! reorganize the eigen vector
 		Q(:,1) = MATMUL(Q,VR(:,I)) ! save to 1st col of Q
 		Q(:,1) = Q(:,1)/SQRT(DOT_PRODUCT(Q(:,1),Q(:,1))) ! normalize
-!		CALL EXPORT('Q1',Q(:,1))
 		! check convergence
 		! if space exhausted, or relative error < tol
 		IF (EXH .OR. ABS((TVAL-TVAL0)/TVAL) < TOL) THEN
@@ -219,7 +283,6 @@ FUNCTION ANNEAL(TS, W) RESULT (TVAL)
 			EXIT ! exit Arnoldi interation
 		ELSE ! not converge, next iteration
 			TVAL0 = TVAL ! save TVAL to TVAL0
-			PRINT *, TVAL
 		END IF
 	END DO ! next Arnoldi interation
 	! if exceed max iteration
@@ -228,132 +291,51 @@ FUNCTION ANNEAL(TS, W) RESULT (TVAL)
 	END IF
 	! reconstruct W tensor for output
 	W%INDS = [(I,I=0,DIM-1)]
-	W%VALS = Q(:,1)
-!	CALL TEN_PRINT(W)
+	WINDS = COLLECT_INDS(W,WLEGS)
+	W%VALS = Q(WINDS,1)
 END FUNCTION ANNEAL
-! anneal the state W to fix point of TS
-FUNCTION ANNEAL1(TS, W) RESULT (TVAL)
-! input: TS - system transfer tensor, W - state
-! on output: W  is modified to the fixed point state
-	USE CONST
-	TYPE(TENSOR), INTENT(IN) :: TS
-	TYPE(TENSOR), INTENT(INOUT) :: W
-	COMPLEX :: TVAL
-	! local variables
-	INTEGER :: DIM, I, ITER
-	INTEGER, ALLOCATABLE :: LINDS(:), RINDS(:), WINDS(:)
-	COMPLEX, ALLOCATABLE :: W0(:), W1(:)
-	COMPLEX :: TVAL0
-	! parameters
-	INTEGER, PARAMETER :: MAX_ITER = 500 ! max interation
-	REAL, PARAMETER :: TOL = 1.E-12 ! allowed error of Tval
-	
-	! unpack data from tensor
-	! collect leg-combined inds in TS and W
-	LINDS = COLLECT_INDS(TS,[2,4,6,8])
-	RINDS = COLLECT_INDS(TS,[1,3,5,7])
-	WINDS = COLLECT_INDS(W,[1,2,3,4])
-	! cal total dim of W
-	DIM = PRODUCT(W%DIMS)
-	! allocate vector for W
-	ALLOCATE(W0(0:DIM-1), W1(0:DIM-1))
-	! dump data from tensor W to vector W0
-	W0 = Z0
-	FORALL (I = 1:SIZE(W%INDS))
-		W0(WINDS(I)) = W%VALS(I)
-	END FORALL
-	! use power iteration algorithm
-	TVAL0 = Z0
-	DO ITER = 1, MAX_ITER
-		! apply TS to W0 -> W1
-		W1 = Z0
-		DO I = 1,SIZE(TS%INDS)
-			W1(RINDS(I)) = W1(RINDS(I)) + TS%VALS(I)*W0(LINDS(I))
-		END DO
-		! cal the diagonal val
-!		TVAL = (W1(RINDS(1))/ABS(W1(RINDS(1))))*SQRT(SUM(ABS(W1)**2))
-		TVAL = SQRT(SUM(ABS(W1)**2))
-		! perform normalization
-		W1 = W1/TVAL
-		! stabilize update and renormalize
-		W0 = W0 + W1
-		W0 = W0/SQRT(SUM(ABS(W0)**2))
-		! check convergence
-		IF (ABS((TVAL-TVAL0)/TVAL) < TOL) THEN ! if relative error < tol
-			! power iteration has converge
-			EXIT ! exit power interation
-		ELSE ! not converge, next iteration
-			TVAL0 = TVAL ! save TVAL to TVAL0
-		END IF
-	END DO
-	! if exceed max iteration
-	IF (ITER > MAX_ITER) THEN !then power iteration has not converge
-		WRITE (*,'(A)') 'ANNEAL::fcov: Power iteration failed to converge, eigen state has not been found.'
-	END IF
-	! reconstruct W tensor for output
-	W%INDS = [(I,I=0,DIM-1)]
-	W%VALS = W0
-!	CALL TEN_PRINT(W)
-END FUNCTION ANNEAL1
-! anneal the state W to fix point of TS
-FUNCTION ANNEAL0(TS, W) RESULT (TVAL)
-! input: TS - system transfer tensor, W - state
-! on output: W  is modified to the fixed point state
-	USE CONST
-	TYPE(TENSOR), INTENT(IN) :: TS
-	TYPE(TENSOR), INTENT(INOUT) :: W
-	COMPLEX :: TVAL
-	! local tensors
-	TYPE(TENSOR) :: W1
-	! local variables
-	COMPLEX :: TVAL0
-	INTEGER :: ITER
-	! parameters
-	INTEGER, PARAMETER :: MAX_ITER = 500 ! max interation
-	REAL, PARAMETER :: TOL = 1.E-12 ! allowed error of Tval
-	
-	! use power iteration algorithm
-	TVAL0 = Z0
-	DO ITER = 1, MAX_ITER
-		! apply TS to W -> W1
-		W1 = TEN_PROD(TS,W,[2,4,6,8],[1,2,3,4])
-		! cal the diagonal val
-		TVAL = (W1%VALS(1)/ABS(W1%VALS(1)))*SQRT(SUM(ABS(W1%VALS)**2))
-		! perform gauge-fixing and normalization
-		W1%VALS = W1%VALS/TVAL
-		! stabilize update and renormalize
-		W = TEN_ADD(W1, W)
-		W%VALS = W%VALS/SQRT(SUM(ABS(W%VALS)**2))
-		! check convergence
-		IF (ABS((TVAL-TVAL0)/TVAL) < TOL) THEN ! if relative error < tol
-			! power iteration has converge
-			RETURN ! return with TVAL, and annealed W
-		ELSE ! not converge, next iteration
-			TVAL0 = TVAL ! save TVAL to TVAL0
-		END IF
-	END DO
-	! if exceed max iteration, then power iteration has not converge
-	WRITE (*,'(A)') 'ANNEAL::fcov: Power iteration failed to converge, eigen state has not been found.'
-END FUNCTION ANNEAL0
 ! update TE given T and A
-SUBROUTINE UPDATE_ENVIRONMENT(TE, T, A)
+FUNCTION GET_TE(TE, T, A) RESULT (TE1)
 ! input: TE - environment tensor, T - site tensor (MPO), A - projector
 ! on output, TE is updated
-	TYPE(TENSOR), INTENT(INOUT) :: TE
-	TYPE(TENSOR), INTENT(IN) :: T, A
-	! local tensor
+	TYPE(TENSOR), INTENT(IN) :: TE, T, A
 	TYPE(TENSOR) :: TE1
 	
 	! zipper-order contraction algorithm
 	TE1 = TEN_PROD(TEN_PROD(TEN_PROD(TEN_CONJG(A),TE,[1],[1]),A,[4],[1]),T,[1,4,5],[1,2,3])
-!	IF (ALL(TE1%DIMS == TE%DIMS)) THEN
-!		TE = TEN_ADD(TE,TE1)
-!		TE%VALS = TE%VALS/2
-!	ELSE
-!		TE = TE1
-!	END IF
-	TE = TE1
-END SUBROUTINE UPDATE_ENVIRONMENT
+END FUNCTION GET_TE
+! split M to A and B
+SUBROUTINE M2AB(M, A, B, S)
+! input: M - state tensor
+! output: A - projection tensor, B - link tensor, S - singular value matrix (of B)
+	TYPE(TENSOR), INTENT(IN)  :: M
+	TYPE(TENSOR), INTENT(OUT) :: A, B, S
+	! local variables
+	REAL, ALLOCATABLE :: SVAL(:), RWORK(:)
+	COMPLEX, ALLOCATABLE :: BA(:,:), U(:,:), VH(:,:), WORK(:)
+	INTEGER :: N1, N2, L, LWORK, INFO, I
+	
+	! dump M tensor to the matrix BA
+	BA = TEN2MAT(M,[1],[2,3])
+	! prepare to perform SVD to BA
+	! get actual size of BA
+	N1 = SIZE(BA,1)
+	N2 = SIZE(BA,2)
+	L = MIN(N1,N2)
+	! calculate the size of the workspace
+	LWORK = MAX(2*L+MAX(N1,N2),MIN(L*(L+65),2*L+32*(N1+N2)))
+	! allocate for workspace
+	ALLOCATE(SVAL(L), U(N1,L), VH(L,N2), WORK(LWORK), RWORK(5*L))
+	! now everything is ready for SVD, call LAPACK
+	CALL ZGESVD('S', 'S', N1, N2, BA, N1, SVAL, U, N1, VH, L, WORK, LWORK, RWORK, INFO)
+	DEALLOCATE(BA, WORK, RWORK) ! make room for later
+	! now BA = U.diag_mat(SVAL).VH
+	! we should have A = VH, S = diag_mat(SVAL), B = U.S
+	! construct A from VH
+	A = MAT2TEN(VH,M%DIMS([3,2,1]),[3],[2,1])
+	S = DIAG_MAT(CMPLX(SVAL))
+	B = TEN_PROD(MAT2TEN(U,[N1,L],[1],[2]),S,[2],[1])
+END SUBROUTINE M2AB
 ! ----------- MEASURE -----------
 ! correlation of MPS
 SUBROUTINE CORR(M,O1,O2)
@@ -382,13 +364,9 @@ CONTAINS
 ! ------------ Tests -------------
 ! test routine
 SUBROUTINE TEST()
-	TYPE(TENSOR) :: T, TE, A, LP, LF, TS
+	TYPE(TENSOR) :: T
 	
 	CALL SET_MPO(T)
-	CALL DMRG_INITIALIZATION(T,TE,A,LP,LF)
-	TS = MAKE_SYSTEM(TE, T)
-	TS = TEN_FLATTEN(TS,[1,3,7,5,0,2,4,8,6])
-	CALL TEN_SAVE('TS',TS)
 END SUBROUTINE TEST
 ! test MPO
 SUBROUTINE TEST_MPO()
@@ -401,12 +379,19 @@ END SUBROUTINE TEST_MPO
 ! test DMRG
 SUBROUTINE TEST_DMRG()
 	USE MODEL
-	TYPE(TENSOR) :: T, M
+	INTEGER, PARAMETER :: L = 8
+	TYPE(TENSOR) :: T, TL(0:L), AL(0:L), S
+	INTEGER :: ITER
 	
 	CALL SET_MPO(T)
 	WRITE (*,'(A,I3,A,F5.2,A,F5.2,A)') 'DCUT = ', DCUT, ', THETA = ', THETA/PI, '*PI, BETA = ', BETA
-	CALL DMRG(T, M)
-	CALL CORR(M, PAULI_MAT([3]), PAULI_MAT([3]))
+	WRITE (*, '(A)') 'iDMRG'
+	CALL IDMRG(T, L, TL, AL, S)
+	DO ITER = 1,10
+		WRITE (*, '(A)') 'fDMRG'
+		CALL FDMRG(T, L ,TL, AL, S)
+	END DO
+!	CALL CORR(M, PAULI_MAT([3]), PAULI_MAT([3]))
 END SUBROUTINE TEST_DMRG
 ! end of module TASK
 END MODULE TASK
