@@ -116,8 +116,9 @@ FUNCTION PAULI_MAT(LBS) RESULT(MAT)
 	END DO !L = 0, N-1
 END FUNCTION PAULI_MAT
 ! return identity tensor of dimension DIMS
-FUNCTION EYE_TEN(DIMS) RESULT (TEN)
+FUNCTION EYE_TEN(DIMS, VAL) RESULT (TEN)
 	INTEGER, INTENT(IN) :: DIMS(:) ! dimensions of the tensor
+	COMPLEX, OPTIONAL :: VAL
 	TYPE(TENSOR) :: TEN ! tensor to return
 	! local variables
 	INTEGER :: ILEG, PD, SKP, I, N
@@ -134,7 +135,11 @@ FUNCTION EYE_TEN(DIMS) RESULT (TEN)
 	TEN%DIMS = DIMS ! set dims
 	N = MINVAL(DIMS) ! num of diagonal elements
 	TEN%INDS = [(I-1,I=1,N)]*SKP
-	TEN%VALS = [((1.,0.),I=1,N)]
+	IF (PRESENT(VAL)) THEN
+		TEN%VALS = [(VAL,I=1,N)]	
+	ELSE
+		TEN%VALS = [((1.,0.),I=1,N)]
+	END IF
 END FUNCTION EYE_TEN
 ! Representation ---------------------------
 ! represent sparse tensor TEN by dense tensor TAR
@@ -706,15 +711,77 @@ FUNCTION TEN_FLATTEN(TEN, LEGS) RESULT(TEN0)
 	TEN0%VALS = TEN%VALS(ORD)
 END FUNCTION TEN_FLATTEN
 ! Tensor SVDs -------------------------------
+! Standard SVD
+SUBROUTINE SVD(TEN, LEGS1, LEGS2, TEN1, TEN2, SMAT, MAX_DCUT, MAX_ERR)
+! split TEN into TEN1*SMAT*TEN2, where SMAT is singular value matrix
+! with original legs grouped by LEGS1 and LEGS2
+! the extra leg is the last leg in TEN1 and TEN2
+	TYPE(TENSOR), INTENT(IN) :: TEN ! input tensor
+	INTEGER, INTENT(IN) :: LEGS1(:), LEGS2(:)
+	TYPE(TENSOR), INTENT(OUT) :: TEN1, TEN2, SMAT
+	INTEGER, OPTIONAL, INTENT(IN) :: MAX_DCUT ! max Dcut of extra leg
+	REAL, OPTIONAL, INTENT(IN) :: MAX_ERR ! max truncation error of extra leg
+	! local variables
+	COMPLEX, ALLOCATABLE :: A(:,:) ! A(M,N) matrix
+	INTEGER :: M, N, L, I
+	! SVD related
+	REAL, ALLOCATABLE :: S(:), RWORK(:)
+	COMPLEX, ALLOCATABLE :: U(:,:), VH(:,:), WORK(:)
+	INTEGER :: LWORK, LRWORK, INFO
+		
+	! flatten the tensor to matrix by grouping LEGS1 and LEGS2 respectively
+	A = TEN2MAT(TEN,LEGS1,LEGS2)
+	! get actual size of the matrix
+	M = SIZE(A,1)
+	N = SIZE(A,2)
+	L = MIN(M,N)
+	! calculate the size of the workspace
+	LWORK = MAX(2*L+MAX(M,N),MIN(L*(L+65),2*L+32*(M+N)))
+	LRWORK = 5*L
+	! allocate for workspace
+	ALLOCATE(S(L), U(M,L), VH(L,N), WORK(LWORK), RWORK(LRWORK))
+	! now everything is ready for SVD, call LAPACK
+	CALL ZGESVD('S', 'S', M, N, A, M, S, U, M, VH, L, WORK, LWORK, RWORK, INFO)
+	! now A = U.diag_mat(S).VH
+	DEALLOCATE(A, WORK, RWORK) ! make room for TEN1 and TEN2
+	IF (PRESENT(MAX_DCUT)) THEN ! if max cut specified 
+		SVD_CUT = MAX_DCUT ! use it to get a suitable cut
+	ELSE ! if max cut not specified
+		SVD_CUT = SIZE(S) ! include all
+	END IF
+	IF (PRESENT(MAX_ERR)) THEN ! if max error specified 
+		SVD_ERR = MAX_ERR ! use it to get a suitable Dcut
+	ELSE ! if max error not specified
+		SVD_ERR = 0. ! require exact
+	END IF
+	! set actual Dcut to L
+	CALL FIND_DCUT(S, SVD_CUT, SVD_ERR)
+	L = SVD_CUT
+	! construct TEN1 and TEN2
+	! rec tensor dimensions
+	TEN1%DIMS = [TEN%DIMS(LEGS1),L]
+	TEN2%DIMS = [TEN%DIMS(LEGS2),L]
+	! make inds
+	TEN1%INDS = [(I,I=0,M*L-1)]
+	TEN2%INDS = [(I,I=0,N*L-1)]
+	! fill in the vals
+	TEN1%VALS = RESHAPE(U(:,1:L),[M*L])
+	TEN2%VALS = RESHAPE(TRANSPOSE(VH(1:L,:)),[N*L])
+	! chop off zero elements in TEN1, TEN2
+	CALL TEN_CHOP(TEN1)
+	CALL TEN_CHOP(TEN2)
+	SMAT = DIAG_MAT(CMPLX(S(1:L)))
+END SUBROUTINE SVD
 ! Kronecker Product SVD
-SUBROUTINE KPSVD(TEN, LEGS1, LEGS2, TEN1, TEN2, MAX_DCUT)
+SUBROUTINE KPSVD(TEN, LEGS1, LEGS2, TEN1, TEN2, MAX_DCUT, MAX_ERR)
 ! split TEN into the TEN1 and TEN2 (with one extra leg connecting them)
 ! with original legs grouped by LEGS1 and LEGS2
 ! the extra leg is the last leg in TEN1 and TEN2
 	TYPE(TENSOR), INTENT(IN) :: TEN ! input tensor
 	INTEGER, INTENT(IN) :: LEGS1(:), LEGS2(:)
-	INTEGER, OPTIONAL, INTENT(IN) :: MAX_DCUT ! max Dcut of extra leg
 	TYPE(TENSOR), INTENT(OUT) :: TEN1, TEN2
+	INTEGER, OPTIONAL, INTENT(IN) :: MAX_DCUT ! max Dcut of extra leg
+	REAL, OPTIONAL, INTENT(IN) :: MAX_ERR ! max truncation error of extra leg
 	! local variables
 	COMPLEX, ALLOCATABLE :: A(:,:) ! A(M,N) matrix
 	COMPLEX :: GU, GV, G
@@ -741,14 +808,18 @@ SUBROUTINE KPSVD(TEN, LEGS1, LEGS2, TEN1, TEN2, MAX_DCUT)
 	! now A = U.diag_mat(S).VT
 	DEALLOCATE(A, WORK, RWORK) ! make room for TEN1 and TEN2
 	IF (PRESENT(MAX_DCUT)) THEN ! if max Dcut specified 
-		L = GET_DCUT(S, MAX_DCUT) ! use it to get a suitable Dcut
+		SVD_CUT = MAX_DCUT ! use it to get a suitable Dcut
 	ELSE ! if max Dcut not specified
-		L = GET_DCUT(S, SIZE(S)) ! Dcut at zeros
-	END IF ! now the actual Dcut has been set to L
-	! cal truncation error by Dcut
-	SVD_CUT = L ! broadcast cut dimension
-	SVD_ERR = SUM(S(L+1:))/SUM(S) ! broadcast truncation error
-!	WRITE (*,'(AI3AF6.2A)') 'KPSVD::msg: SVD cutoff at ', L, ' with ', 100*ERR, '% truncation error.'
+		SVD_CUT = SIZE(S) ! Dcut at zeros
+	END IF
+	IF (PRESENT(MAX_ERR)) THEN ! if max error specified 
+		SVD_ERR = MAX_ERR ! use it to get a suitable Dcut
+	ELSE ! if max error not specified
+		SVD_ERR = 0. ! require exact
+	END IF
+	! set actual Dcut to L
+	CALL FIND_DCUT(S, SVD_CUT, SVD_ERR)
+	L = SVD_CUT
 	! construct TEN1 and TEN2
 	! rec tensor dimensions
 	TEN1%DIMS = [TEN%DIMS(LEGS1),L]
@@ -779,15 +850,16 @@ SUBROUTINE KPSVD(TEN, LEGS1, LEGS2, TEN1, TEN2, MAX_DCUT)
 	CALL TEN_CHOP(TEN2)
 END SUBROUTINE KPSVD
 ! symmetric KPSVD (for transpose symmetric tensor)
-SUBROUTINE SYSVD(TEN, LEGS1, LEGS2, TEN1, TEN0, MAX_DCUT)
+SUBROUTINE SYSVD(TEN, LEGS1, LEGS2, TEN1, TEN0, MAX_DCUT, MAX_ERR)
 ! * caller must make sure that TEN(LEGS1,LEGS2) = TEN(LEGS2,LEGS1)
 ! split TEN into the TEN1 - TEN0 - TEN1^T (with one extra leg connecting them)
 ! with original legs grouped by LEGS1 and LEGS2
 ! the extra leg is the last leg in TEN1
 	TYPE(TENSOR), INTENT(IN) :: TEN ! input tensor
 	INTEGER, INTENT(IN) :: LEGS1(:), LEGS2(:)
-	INTEGER, OPTIONAL, INTENT(IN) :: MAX_DCUT ! max Dcut of extra leg
 	TYPE(TENSOR), INTENT(OUT) :: TEN1, TEN0
+	INTEGER, OPTIONAL, INTENT(IN) :: MAX_DCUT ! max Dcut of extra leg
+	REAL, OPTIONAL, INTENT(IN) :: MAX_ERR ! max truncation error of extra leg
 	! local variables
 	COMPLEX, ALLOCATABLE :: A(:,:) ! A(N,N) matrix, suppose to be symmetric
 	COMPLEX :: GU, GV, G
@@ -814,14 +886,18 @@ SUBROUTINE SYSVD(TEN, LEGS1, LEGS2, TEN1, TEN0, MAX_DCUT)
 	! now A = U.diag_mat(S).VH
 	DEALLOCATE(A, WORK, RWORK) ! make room for TEN1
 	IF (PRESENT(MAX_DCUT)) THEN ! if max Dcut specified 
-		L = GET_DCUT(S, MAX_DCUT) ! use it to get a suitable Dcut
+		SVD_CUT = MAX_DCUT ! use it to get a suitable Dcut
 	ELSE ! if max Dcut not specified
-		L = GET_DCUT(S, SIZE(S)) ! Dcut at zeros
-	END IF ! now the actual Dcut has been set to L
-	! cal truncation error by Dcut
-	SVD_CUT = L ! broadcast cut dimension
-	SVD_ERR = SUM(S(L+1:))/SUM(S) ! broadcast truncation error
-!	WRITE (*,'(AI3AF6.2A)') 'SYSVD::msg: SVD cutoff at ', L, ' with ', 100*ERR, '% truncation error.'
+		SVD_CUT = SIZE(S) ! Dcut at zeros
+	END IF
+	IF (PRESENT(MAX_ERR)) THEN ! if max error specified 
+		SVD_ERR = MAX_ERR ! use it to get a suitable Dcut
+	ELSE ! if max error not specified
+		SVD_ERR = 0. ! require exact
+	END IF
+	! set actual Dcut to L
+	CALL FIND_DCUT(S, SVD_CUT, SVD_ERR)
+	L = SVD_CUT
 	! construct TEN0 as diag mat of singular values
 	TEN0 = DIAG_MAT(CMPLX(S(1:L)))
 	! gauge fixing
@@ -903,51 +979,104 @@ SUBROUTINE HOSVD(TEN, US, LEGS0, DCUTS)
 	END DO
 END SUBROUTINE HOSVD
 ! Auxiliary procedures ----------------------
-! get suitable Dcut from singular val list
-FUNCTION GET_DCUT(S,MAX_DCUT) RESULT(DCUT)
+! find suitable Dcut from singular val list
+SUBROUTINE FIND_DCUT(S, CUT, ERR)
 ! called by KPSVD, SYSVD
-! S(:) - list of singular vals, MAX_DCUT - upper bound of Dcut
-! the suitable Dcut must:
-! 1. not exceeding MAX_DCUT
-! 2. S(1:DCUT) contains no zeros
+! S(:) - list of singular vals, assumed to have ordered
+! on input:
+! CUT - upper bound of dim cut
+! ERR  - upper bound of relative error
+! the suitable cut must:
+! 1. not exceeding max cut
+! 2. S(1:CUT) contains no zeros
 ! 3. degenerate singular vals should not be separated
+! 4. under above, relative err not exceeding max err
+! under the above conditions, find cut as small as possible
+! on output:
+! CUT and ERR are modified to the actual value
 	REAL, INTENT(IN) :: S(:)
-	INTEGER, INTENT(IN) :: MAX_DCUT
-	INTEGER :: DCUT
+	INTEGER, INTENT(INOUT) :: CUT
+	REAL, INTENT(INOUT) :: ERR
 	! local variables
-	REAL :: EPS, S0, S1
-	INTEGER :: NS, IS
+	REAL :: EPS, S0, S1, SE, SA
+	INTEGER :: NS, GAP
 	
-	DCUT = 0 ! initialize
-	NS = SIZE(S) ! get size of S
-	IF (NS == 0) RETURN ! if S empty, return with Dcut = 0
+	IF (SIZE(S) == 0) THEN ! if S empty 
+		CUT = 0  ! return with cut = 0
+		ERR = 0. ! which is exact
+		RETURN
+	END IF
 	! if S not empty
 	S0 = S(1) ! get the leading S val
-	IF (S0 == 0.) RETURN ! if leading S val = 0, return with Dcut = 0 
+	IF (S0 == 0.) THEN ! if leading S val = 0
+		CUT = 0  ! return with cut = 0 
+		ERR = 0. ! which is exact
+		RETURN
+	END IF
 	! use S(1) to estimate the resolution
-	EPS = MAX(S0*TOL, TOL) ! estimate EPS
+	EPS = S0*TOL ! estimate EPS
 	! singular vals within EPS will be considered the same
-	! searching for Dcut
-	DO IS = 2, MIN(NS, MAX_DCUT+1) ! running over the singular vals
-		S1 = S(IS) ! get new S val
-		! now the cut is between:
-		! ... IS-1 | IS ...
-		! ...   S0 | S1 ...
-		IF (ABS(S1-S0) > EPS) THEN ! if S1 and S0 not degenerated
-			! discover a new gap in the S vals
-			DCUT = IS - 1 ! update the Dcut to the new cut
+	NS = MIN(SIZE(S),CUT) ! set upper bound to the max cut
+	! move the upper bound down to the edge of zero zone
+	DO WHILE (ABS(S(NS)) < EPS) ! if NS is in the zero zone
+		NS = NS - 1 ! decrease NS
+	END DO
+	! now NS rest in a position that is within the max cut
+	! and out of the zero zone (1. 2. satisfied)
+	! suitable cut must be find <= NS
+	! first, find the first GAP within NS
+	GAP = NS ! initialize with NS
+	IF (NS < SIZE(S)) THEN ! take care of degeneracy if not at the end
+		! as now NS < SIZE(S), S(NS+1) is safe to reference 
+		DO WHILE (ABS(S(GAP)-S(GAP+1)) < EPS) ! if degenerate
+			GAP = GAP - 1 ! decrease GAP
+			IF (GAP == 0) THEN
+				! this means all are degenerated up to NS
+				! have to give up 3. and set GAP back to NS
+				GAP = NS
+				EXIT
+			END IF
+		END DO ! until GAP is at a gap-left
+	END IF ! now NS is either at the list end or at a gap-left
+	! searching for suitable cut (using 3. 4.)
+	SA = SUM(S**2) ! prepare total S^2
+	SE = SUM(S(GAP+1:)**2) ! initialize SE
+	IF (GAP == 1) THEN ! if gap at the begining
+		CUT = GAP ! must at least return the non-zero first mode
+		ERR = SE/SA
+		RETURN
+	ELSE ! otherwise, return with the gap before exceeding max err
+		! if already exceed max err
+		IF (SE/SA >= ERR) THEN ! return with the last gap
+			CUT = GAP
+			ERR = SUM(S(GAP+1:)**2)/SA
+			RETURN
 		END IF
-		! if the zero zone is reached
-		IF (ABS(S1) < EPS) RETURN ! return with the present cut
-		! go to the next S val
-		S0 = S1 ! rec this S val
-	END DO ! IS
-	! if loop is finished, IS at the end, then the last block is degenerated
-	IF (IS > NS) DCUT = NS ! set DCUT to the end
-	! if the loop is finished but the Dcut has not been updated
-	! this means all S vals are degenerated
-	IF (DCUT == 0) DCUT = MIN(NS, MAX_DCUT) ! set DCUT to the end
-END FUNCTION GET_DCUT
+		! if within max err, can try lower cut
+		DO NS = GAP, 1, -1 ! going downward
+			! accumulate this S^2 to SE
+			SE = SE + S(NS)**2
+			! if exceed max err
+			IF (SE/SA >= ERR) THEN ! return with the last gap
+				CUT = GAP
+				ERR = SUM(S(GAP+1:)**2)/SA
+				RETURN
+			END IF
+			! check the next gap between:
+			! ... NS-1 | NS ...
+			! if not degenerated
+			IF (NS > 1 .AND. ABS(S(NS-1)-S(NS)) > EPS) THEN
+				! discover a new gap in the S vals
+				GAP = NS-1 ! update the gap-left position
+			END IF
+		END DO ! I <- I-1
+	END IF
+	! if the subroutine has not return yet
+	! it means the max err is too large that even if NS = 1
+	! the max err has not been exceeded
+	CUT = GAP ! in this case, set CUT to the latest gap
+	ERR = SUM(S(GAP+1:)**2)/SA ! and return with actual err
+END SUBROUTINE FIND_DCUT
 ! collect index for legs
 FUNCTION COLLECT_INDS(TEN, LEGS) RESULT(LINDS)
 ! first get dims and dim-prods for legs
