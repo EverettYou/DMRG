@@ -52,9 +52,9 @@ SUBROUTINE DMRG(T, A, B, S)
 ! output: A,B - MPS tensor, S - entanglement matrix
 	USE MODEL
 	TYPE(TENSOR), INTENT(IN)  :: T
-	TYPE(TENSOR), INTENT(OUT) :: A(LEN), B(LEN), S
+	TYPE(TENSOR), INTENT(OUT) :: A(LEN), B(LEN)
 	! local tensor
-	TYPE(TENSOR) :: TA(LEN), TB(LEN), S0, TS, W
+	TYPE(TENSOR) :: TA(LEN), TB(LEN), S0, S, TS, W
 	! local variables
 	INTEGER :: DPHY, L, ITER
 	COMPLEX :: TVAL
