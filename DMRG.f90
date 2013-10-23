@@ -9,10 +9,10 @@ END MODULE CONST
 MODULE MODEL
 	USE CONST
 !	REAL    :: BETA = 0.440687
-	REAL    :: BETA = 0.4
-	REAL    :: THETA = 0.*PI
-	INTEGER :: LEN = 10 ! must be even and larger than 4
-	INTEGER :: MAX_CUT = 8
+	REAL    :: BETA = 0.
+	REAL    :: THETA = 1.*PI
+	INTEGER :: LEN = 20 ! must be even and larger than 4
+	INTEGER :: MAX_CUT = 16
 	REAL    :: MAX_ERR = 0.
 END MODULE MODEL
 ! ############## PHYSICS ###################
@@ -47,37 +47,28 @@ SUBROUTINE SET_MPO(T)
 END SUBROUTINE SET_MPO
 ! ----------- DMRG -----------
 ! DMRG Kernel
-SUBROUTINE DMRG(T, A, B, S)
+SUBROUTINE DMRG(T, A, B)
 ! input: T - MPO site tensor
 ! output: A,B - MPS tensor, S - entanglement matrix
 	USE MODEL
 	TYPE(TENSOR), INTENT(IN)  :: T
 	TYPE(TENSOR), INTENT(OUT) :: A(LEN), B(LEN)
 	! local tensor
-	TYPE(TENSOR) :: TA(LEN), TB(LEN), S0, S, TS, W
+	TYPE(TENSOR) :: TA(LEN), TB(LEN), S
 	! local variables
-	INTEGER :: DPHY, L, ITER
+	INTEGER :: L, ITER
 	COMPLEX :: TVAL
+	! parameters
+	INTEGER, PARAMETER :: MAX_SWEEP = 5
 	
 	! check validity of system size LEN
 	IF (MODULO(LEN,2) == 1 .OR. LEN <= 4) THEN
 		WRITE (*,'(A)') 'DMRG::xlen: LEN must be even and greater than 4.'
 		STOP
 	END IF
-	! initialize tensors
-	! boundary MPO
-	TA(1) = T
-	TB(1) = T
-	! boundary MPS
-	DPHY = T%DIMS(1) ! get physical dim
-	A(1) = TEN_PROD(TENSOR([1],[0],[Z1]),EYE_TEN([DPHY,DPHY]))
-	B(1) = A(1)
-	! initial entanglement mat
-	S0 = EYE_TEN([1,1])
-	S  = EYE_TEN([DPHY,DPHY],SQRT(Z1/DPHY))
 	! iDMRG (warm up)
-	DO L = 2, LEN/2
-		CALL IDMRG(L, T, TA, TB, A, B, S0, S, TVAL)
+	DO L = 1, LEN/2
+		CALL IDMRG(L, T, TA, TB, A, B, S, TVAL)
 		CALL SHOW_DMRG_STATUS('I',L,TVAL,S%VALS)
 	END DO
 	! fDMRG (first sweep)
@@ -85,7 +76,7 @@ SUBROUTINE DMRG(T, A, B, S)
 		CALL FDMRG(L, T, TA, TB, A, B, S, TVAL)
 		CALL SHOW_DMRG_STATUS('F',L,TVAL,S%VALS)
 	END DO
-	DO ITER = 1, 5
+	DO ITER = 1, MAX_SWEEP
 		! fFDMRG (backward sweep)
 		DO L = 1, LEN
 			CALL FDMRG(L, T, TB, TA, B, A, S, TVAL)
@@ -99,19 +90,35 @@ SUBROUTINE DMRG(T, A, B, S)
 	END DO
 END SUBROUTINE DMRG
 ! infinite-size DMRG step
-SUBROUTINE IDMRG(L, T, TA, TB, A, B, S0, S, TVAL)
+SUBROUTINE IDMRG(L, T, TA, TB, A, B, S, TVAL)
 ! perform one step of iDMRG at L
 ! input: L - lattice position, T - MPO
 ! inout: TA, TB, A, B, S0, S will be updated
 	USE MODEL
-	INTEGER, INTENT(IN)      :: L ! must >= 2
+	INTEGER, INTENT(IN)      :: L
 	TYPE(TENSOR), INTENT(IN) :: T
-	TYPE(TENSOR), INTENT(INOUT) :: TA(:), TB(:), A(:), B(:), S0, S
+	TYPE(TENSOR), INTENT(INOUT) :: TA(:), TB(:), A(:), B(:), S
 	COMPLEX, INTENT(INOUT) :: TVAL
 	! local tensors
 	TYPE(TENSOR) :: W, TS
+	TYPE(TENSOR), SAVE :: S0
+	! local variables
+	INTEGER :: DPHY
 	
-	IF (L >= 2) THEN
+	IF (L == 1) THEN
+		! initialize tensors
+		! boundary MPO
+		TA(1) = T
+		TB(1) = T
+		! boundary MPS
+		DPHY = T%DIMS(1) ! get physical dim
+		A(1) = TEN_PROD(TENSOR([1],[0],[Z1]),EYE_TEN([DPHY,DPHY]))
+		B(1) = A(1)
+		! initial entanglement mat
+		S0 = EYE_TEN([1,1])
+		S = EYE_TEN([DPHY,DPHY],SQRT(Z1/DPHY))
+		TVAL = Z1 ! return initial Tval
+	ELSE ! L >= 2
 		! estimate trial W
 		S0%VALS = Z1/S0%VALS ! cal S0^(-1) -> S0
 		W = MAKE_W5(A(L-1), B(L-1), S, S0)
@@ -305,22 +312,83 @@ FUNCTION GET_TX(TX, T, X) RESULT (TX1)
 	TX1 = TEN_PROD(TEN_PROD(TEN_PROD(TEN_CONJG(X),TX,[1],[1]),X,[4],[1]),T,[1,4,5],[1,2,3])
 END FUNCTION GET_TX
 ! ----------- Measure -----------
-! correlation of MPS
-SUBROUTINE CORR(M,O1,O2)
-! input: M - MPS tensor, O1, O2 -  observables
-! output:
-	TYPE(TENSOR), INTENT(IN) :: M, O1, O2
+! 2-site correlation of MPS
+FUNCTION CORR2(X, O1, O2) RESULT (CORR)
+! input: X - MPS tensor, O1, O2 -  observables
+! output: CORR - correlation function
+	USE MODEL
+	TYPE(TENSOR), INTENT(IN) :: X(LEN), O1, O2
+	COMPLEX :: CORR(LEN)
 	! local tensors
-	TYPE(TENSOR) :: MC, M0, M1, M2
+	TYPE(TENSOR) :: D2
+	! local variables
+	INTEGER :: L
 	
-	MC = TEN_CONJG(M)
-	M0 = TEN_FLATTEN(TEN_PROD(MC,M,[2],[2]),[1,3,0,2,4])
-	M1 = TEN_FLATTEN(TEN_PROD(MC,TEN_PROD(O1,M,[2],[2]),[2],[1]),[1,3,0,2,4])
-	M2 = TEN_FLATTEN(TEN_PROD(MC,TEN_PROD(O2,M,[2],[2]),[2],[1]),[1,3,0,2,4])
-	CALL TEN_SAVE('M0',M0)
-	CALL TEN_SAVE('M1',M1)
-	CALL TEN_SAVE('M2',M2)
-END SUBROUTINE CORR
+	! assuming X(:) is left-canonical, go backward
+	D2 = MAKE_D(X(LEN), O2) ! make initial D2
+	! now D2 carries the measurement of O2 at the boundary
+	CORR = Z0 ! clear CORR
+	DO L = LEN-1, 1, -1
+		! measure O1 on site L with D2
+		CORR(L) = MEASURE(D2, X(L), O1)
+		! grow D2
+		IF (L > 1) D2 = GROW_D(D2, X(L))
+	END DO
+END FUNCTION CORR2
+! make double tensor
+FUNCTION MAKE_D(X, O) RESULT(D)
+! input: X - MPS tensor, O - observable matrix
+! output: D - double tensor, D = XH*O*X
+! if O is absent, treat O = 1
+	TYPE(TENSOR), INTENT(IN) :: X
+	TYPE(TENSOR), OPTIONAL, INTENT(IN) :: O
+	TYPE(TENSOR) :: D
+	
+	IF (PRESENT(O)) THEN
+		D = TEN_PROD(TEN_PROD(TEN_CONJG(X),O,[2],[1]),X,[2,3],[3,2])
+	ELSE ! O is absent
+		D = TEN_PROD(TEN_CONJG(X),X,[2,3],[2,3])
+	END IF
+END FUNCTION MAKE_D
+! grow double tensor
+FUNCTION GROW_D(D, X, O) RESULT(D1)
+! input: D - double tensor, X - MPS tensor
+! output: D1 - new double tensor, D1 = (XH*O*X)*D
+! if O is absent, treat O = 1
+	TYPE(TENSOR), INTENT(IN) :: D, X
+	TYPE(TENSOR), OPTIONAL, INTENT(IN) :: O
+	TYPE(TENSOR) :: D1
+	
+	IF (PRESENT(O)) THEN
+		D1 = TEN_PROD(TEN_PROD(TEN_PROD(TEN_CONJG(X),O,[2],[1]),X,[3],[2]),D,[2,4],[1,2])
+	ELSE ! O is absent
+		D1 = TEN_PROD(TEN_PROD(TEN_CONJG(X),D,[3],[1]),X,[2,3],[2,3])
+	END IF
+END FUNCTION GROW_D
+! take measurement
+FUNCTION MEASURE(D, X, O) RESULT (R)
+! input: D - double tensor, X - MPS tensor, O - observable mat
+! output: R - result of measurement R = Tr (XH*O*X)*D
+! if O is absent, treat O = 1
+	USE CONST
+	TYPE(TENSOR), INTENT(IN) :: D, X
+	TYPE(TENSOR), OPTIONAL, INTENT(IN) :: O
+	COMPLEX :: R
+	! local tensor
+	TYPE(TENSOR) :: TR
+	
+	IF (PRESENT(O)) THEN
+		TR = TEN_PROD(TEN_PROD(TEN_PROD(TEN_CONJG(X),O,[2],[1]),X,[1,3],[1,2]),D,[1,2],[1,2])
+	ELSE ! O is absent
+		TR = TEN_PROD(TEN_PROD(TEN_CONJG(X),X,[1,2],[1,2]),D,[1,2],[1,2])
+	END IF
+	! take the measurement value
+	IF (SIZE(TR%VALS) == 0) THEN ! if TR is empty
+		R = Z0 ! result is zero
+	ELSE ! if TR is finite
+		R = TR%VALS(1) ! put the result
+	END IF
+END FUNCTION MEASURE
 ! ----------- Debug ------------
 ! show status after DMRG step
 SUBROUTINE SHOW_DMRG_STATUS(MODE,L,TVAL,SVALS)
@@ -393,14 +461,17 @@ SUBROUTINE TEST_MPO()
 END SUBROUTINE TEST_MPO
 ! test DMRG
 SUBROUTINE TEST_DMRG()
+	USE MATHIO
 	USE MODEL
 	TYPE(TENSOR) :: T, A(LEN), B(LEN), S
+	COMPLEX :: C(LEN)
 	INTEGER :: ITER
 	
 	CALL SET_MPO(T)
 	WRITE (*,'(A,I3,A,F5.2,A,F5.2,A)') 'cut = ', MAX_CUT, ', theta = ', THETA/PI, '*pi, beta = ', BETA
-	CALL DMRG(T, A, B, S)
-!	CALL CORR(M, PAULI_MAT([3]), PAULI_MAT([3]))
+	CALL DMRG(T, A, B)
+	C = CORR2(A, PAULI_MAT([3]), PAULI_MAT([3]))
+	CALL EXPORT('C',C)
 END SUBROUTINE TEST_DMRG
 ! end of module TASK
 END MODULE TASK
