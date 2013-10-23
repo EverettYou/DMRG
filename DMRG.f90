@@ -9,9 +9,9 @@ END MODULE CONST
 MODULE MODEL
 	USE CONST
 !	REAL    :: BETA = 0.440687
-	REAL    :: BETA = 1.
+	REAL    :: BETA = 0.4
 	REAL    :: THETA = 0.*PI
-	INTEGER :: LEN = 8 ! must be even and larger than 4
+	INTEGER :: LEN = 10 ! must be even and larger than 4
 	INTEGER :: MAX_CUT = 8
 	REAL    :: MAX_ERR = 0.
 END MODULE MODEL
@@ -56,7 +56,7 @@ SUBROUTINE DMRG(T, A, B, S)
 	! local tensor
 	TYPE(TENSOR) :: TA(LEN), TB(LEN), S0, TS, W
 	! local variables
-	INTEGER :: DPHY, L
+	INTEGER :: DPHY, L, ITER
 	COMPLEX :: TVAL
 	
 	! check validity of system size LEN
@@ -75,8 +75,43 @@ SUBROUTINE DMRG(T, A, B, S)
 	! initial entanglement mat
 	S0 = EYE_TEN([1,1])
 	S  = EYE_TEN([DPHY,DPHY],SQRT(Z1/DPHY))
-	! inf-size DMRG (warm up)
+	! iDMRG (warm up)
 	DO L = 2, LEN/2
+		CALL IDMRG(L, T, TA, TB, A, B, S0, S, TVAL)
+		CALL SHOW_DMRG_STATUS('I',L,TVAL,S%VALS)
+	END DO
+	! fDMRG (first sweep)
+	DO L = LEN/2+1, LEN
+		CALL FDMRG(L, T, TA, TB, A, B, S, TVAL)
+		CALL SHOW_DMRG_STATUS('F',L,TVAL,S%VALS)
+	END DO
+	DO ITER = 1, 5
+		! fFDMRG (backward sweep)
+		DO L = 1, LEN
+			CALL FDMRG(L, T, TB, TA, B, A, S, TVAL)
+			CALL SHOW_DMRG_STATUS('B',L,TVAL,S%VALS)
+		END DO
+		! fFDMRG (forward sweep)
+		DO L = 1, LEN
+			CALL FDMRG(L, T, TA, TB, A, B, S, TVAL)
+			CALL SHOW_DMRG_STATUS('F',L,TVAL,S%VALS)
+		END DO
+	END DO
+END SUBROUTINE DMRG
+! infinite-size DMRG step
+SUBROUTINE IDMRG(L, T, TA, TB, A, B, S0, S, TVAL)
+! perform one step of iDMRG at L
+! input: L - lattice position, T - MPO
+! inout: TA, TB, A, B, S0, S will be updated
+	USE MODEL
+	INTEGER, INTENT(IN)      :: L ! must >= 2
+	TYPE(TENSOR), INTENT(IN) :: T
+	TYPE(TENSOR), INTENT(INOUT) :: TA(:), TB(:), A(:), B(:), S0, S
+	COMPLEX, INTENT(INOUT) :: TVAL
+	! local tensors
+	TYPE(TENSOR) :: W, TS
+	
+	IF (L >= 2) THEN
 		! estimate trial W
 		S0%VALS = Z1/S0%VALS ! cal S0^(-1) -> S0
 		W = MAKE_W5(A(L-1), B(L-1), S, S0)
@@ -88,10 +123,48 @@ SUBROUTINE DMRG(T, A, B, S)
 		! update TA, TB
 		TA(L) = GET_TX(TA(L-1), T, A(L))
 		TB(L) = GET_TX(TB(L-1), T, B(L))
-		WRITE (*,'(I3,A,G10.4,A,G10.4,A,100F6.3)') L, ': (', REALPART(TVAL),',', IMAGPART(TVAL), ') S:', REALPART(S%VALS)
-	END DO
-	! finite-size DMRG (first sweep)
-	DO L = LEN/2+1, LEN-2
+	END IF
+END SUBROUTINE IDMRG
+! finite-size DMRG step
+SUBROUTINE FDMRG(L, T, TA, TB, A, B, S, TVAL)
+! perform one step of fDMRG at L (forward dirction)
+! input: L - lattice position, T - MPO
+! inout: TA, A, S will be updated
+! on output: TB is not touched, but B is updated
+	USE MODEL
+	INTEGER, INTENT(IN)      :: L
+	TYPE(TENSOR), INTENT(IN) :: T
+	TYPE(TENSOR), INTENT(INOUT) :: TA(:), TB(:), A(:), B(:), S
+	COMPLEX, INTENT(INOUT) :: TVAL
+	! local tensors
+	TYPE(TENSOR) :: W, TS
+	COMPLEX, SAVE :: TVAL0
+	
+	IF (L == 1) THEN
+		! A(1), no update, obtained from the last sweep
+		! update TA, to restart
+		! SSB treatment to be implemented here
+		TA(1) = TEN_FLATTEN(TEN_PROD(TEN_PROD(TEN_CONJG(A(1)),T,[2],[1]),A(1), [4],[2]), [2,0,1,4,5,0,6,0,3])
+		TVAL = TVAL0 ! retrieve Tval from last save
+	ELSEIF (L == LEN-1) THEN
+		! estimate trial W
+		W = MAKE_W3(S, B(2), B(1))
+		TS = GET_TS1(T, TA(LEN-2)) ! construct TS (boundary)
+		TVAL = ANNEAL(TS, W) ! anneal W by TS
+		TVAL0 = TVAL ! save Tval at the last site
+		! SVD split W, update A, S
+		CALL SVD(W,[1,2],[3,4],A(LEN-1),B(1),S,MAX_CUT,MAX_ERR)
+		! update TA
+		TA(LEN-1) = GET_TX(TA(LEN-2), T, A(LEN-1))
+	ELSEIF (L == LEN) THEN
+		! update the ending A by S*B
+		A(LEN) = TEN_TRANS(TEN_PROD(S,B(1),[2],[3]),[1,3,2])
+		! update TA
+		TA(LEN) = GET_TX(TA(LEN-1), T, A(LEN))
+		! cal Tval by Tr (for the whole system)
+		TS = TEN_TRACE(TA(LEN),[1,2],[3,4])
+		TVAL = TS%VALS(1)
+	ELSE ! 2 <= L <= LEN-2
 		! estimate trial W
 		W = MAKE_W3(S, B(LEN-L+1), B(LEN-L))
 		TS = GET_TS(T, TA(L-1), TB(LEN-L-1)) ! construct TS
@@ -100,33 +173,8 @@ SUBROUTINE DMRG(T, A, B, S)
 		CALL SVD(W,[1,2],[3,4],A(L),B(LEN-L),S,MAX_CUT,MAX_ERR)
 		! update TA
 		TA(L) = GET_TX(TA(L-1), T, A(L))
-		WRITE (*,'(I3,A,G10.4,A,G10.4,A,100F6.3)') L, ': (', REALPART(TVAL),',', IMAGPART(TVAL), ') S:', REALPART(S%VALS)
-	END DO
-	! finite-size DMRG (backward sweep)
-	DO L = 3, LEN-2
-		! estimate trial W
-		W = MAKE_W3(S, A(LEN-L+1), A(LEN-L))
-		TS = GET_TS(T, TB(L-1), TA(LEN-L-1)) ! construct TS
-		TVAL = ANNEAL(TS, W) ! anneal W by TS
-		! SVD split W, update B, S
-		CALL SVD(W,[1,2],[3,4],B(L),A(LEN-L),S,MAX_CUT,MAX_ERR)
-		! update TB
-		TB(L) = GET_TX(TB(L-1), T, B(L))
-		WRITE (*,'(I3,A,G10.4,A,G10.4,A,100F6.3)') LEN-L+1, ': (', REALPART(TVAL),',', IMAGPART(TVAL), ') S:', REALPART(S%VALS)
-	END DO
-	! finite-size DMRG (forward sweep)
-	DO L = 3, LEN-2
-		! estimate trial W
-		W = MAKE_W3(S, B(LEN-L+1), B(LEN-L))
-		TS = GET_TS(T, TA(L-1), TB(LEN-L-1)) ! construct TS
-		TVAL = ANNEAL(TS, W) ! anneal W by TS
-		! SVD split W, update A, S
-		CALL SVD(W,[1,2],[3,4],A(L),B(LEN-L),S,MAX_CUT,MAX_ERR)
-		! update TA
-		TA(L) = GET_TX(TA(L-1), T, A(L))
-		WRITE (*,'(I3,A,G10.4,A,G10.4,A,100F6.3)') L, ': (', REALPART(TVAL),',', IMAGPART(TVAL), ') S:', REALPART(S%VALS)
-	END DO
-END SUBROUTINE DMRG
+	END IF
+END SUBROUTINE FDMRG
 ! estimate 2-site trial state
 FUNCTION MAKE_W5(A, B, S, SI) RESULT(W)
 	TYPE(TENSOR), INTENT(IN) :: A, B, S, SI
@@ -148,6 +196,13 @@ FUNCTION GET_TS(T, TA, TB) RESULT (TS)
 	
 	TS = TEN_PROD(TEN_PROD(TA,T,[4],[2]),TEN_PROD(TB,T,[4],[2]),[2,6],[2,6])
 END FUNCTION GET_TS
+! construct 1-block-2-site system tensor (at boundary)
+FUNCTION GET_TS1(T, TA) RESULT (TS)
+	TYPE(TENSOR), INTENT(IN) :: T, TA
+	TYPE(TENSOR) :: TS
+	
+	TS = TEN_PROD(TEN_PROD(TEN_PROD(TA,T,[4],[2]),EYE_TEN([1,1])),T,[2,6],[2,4])
+END FUNCTION GET_TS1
 ! anneal the state W to fix point of TS
 FUNCTION ANNEAL(TS, W) RESULT (TVAL)
 ! input: TS - system transfer tensor, W - state
@@ -159,7 +214,7 @@ FUNCTION ANNEAL(TS, W) RESULT (TVAL)
 	COMPLEX :: TVAL
 	! parameters
 	INTEGER, PARAMETER :: N = 16 ! Krylov space dimension
-	INTEGER, PARAMETER :: MAX_ITER = 50 ! max interation
+	INTEGER, PARAMETER :: MAX_ITER = 500 ! max interation
 	REAL, PARAMETER :: TOL = 1.E-12 ! allowed error of Tval
 	! local variables
 	INTEGER :: DIM, I, J, K, ITER, INFO
@@ -249,7 +304,7 @@ FUNCTION GET_TX(TX, T, X) RESULT (TX1)
 	! zipper-order contraction algorithm
 	TX1 = TEN_PROD(TEN_PROD(TEN_PROD(TEN_CONJG(X),TX,[1],[1]),X,[4],[1]),T,[1,4,5],[1,2,3])
 END FUNCTION GET_TX
-! ----------- MEASURE -----------
+! ----------- Measure -----------
 ! correlation of MPS
 SUBROUTINE CORR(M,O1,O2)
 ! input: M - MPS tensor, O1, O2 -  observables
@@ -266,6 +321,49 @@ SUBROUTINE CORR(M,O1,O2)
 	CALL TEN_SAVE('M1',M1)
 	CALL TEN_SAVE('M2',M2)
 END SUBROUTINE CORR
+! ----------- Debug ------------
+! show status after DMRG step
+SUBROUTINE SHOW_DMRG_STATUS(MODE,L,TVAL,SVALS)
+	USE MODEL
+	CHARACTER, INTENT(IN) :: MODE
+	INTEGER, INTENT(IN) :: L
+	COMPLEX, INTENT(IN) :: TVAL
+	COMPLEX, INTENT(IN) :: SVALS(:)
+	! local variables
+	REAL, ALLOCATABLE :: S(:)
+	INTEGER :: I1, I2, NS
+	CHARACTER(2) :: JN
+	COMPLEX :: LGT
+	
+	SELECT CASE (MODE)
+		CASE ('I')
+			I1 = L
+			I2 = L+1
+			JN = '<>'
+		CASE ('F')
+			I1 = L
+			I2 = L+1
+			JN = '->'
+			IF (I2 == LEN+1) I2 = 1
+		CASE ('B')
+			I1 = LEN-L
+			I2 = LEN-L+1
+			JN = '<-'
+			IF (I1 == 0) I1 = LEN
+	END SELECT
+	IF (L == LEN) THEN
+		S = [1.]
+	ELSE
+		S = REALPART(SVALS)
+	END IF
+	NS = SIZE(SVALS)
+	LGT = LOG(TVAL)
+	IF (NS <= 6) THEN
+		WRITE (*,'(I3,A,I3,A,F10.6,A,F6.3,A,6F6.3)') I1,JN,I2,': (', REALPART(LGT),',', IMAGPART(LGT), ') S:', S
+	ELSE
+		WRITE (*,'(I3,A,I3,A,F10.6,A,F6.3,A,4F6.3,A,F6.3)') I1,JN,I2,': (', REALPART(LGT),',', IMAGPART(LGT), ') S:', S(1:4), '  ... ', S(NS)
+	END IF
+END SUBROUTINE SHOW_DMRG_STATUS
 ! end of module PHYSICS
 END MODULE PHYSICS
 ! ################ TASK ####################
