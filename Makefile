@@ -4,7 +4,7 @@ FC = gfortran
 TOUCH = touch
 RM = rm
 CFLAGS = -fdefault-real-8 -fimplicit-none -ffree-line-length-none
-LFLAGS = -framework vecLib
+LFLAGS = -framework vecLib -l ./libarpack.a
 
 all: $(EXE)
 $(EXE): $(OBJ)/TENSOR.o $(OBJ)/MATHIO.o $(OBJ)/$(EXE).o

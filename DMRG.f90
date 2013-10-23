@@ -10,8 +10,8 @@ MODULE MODEL
 	USE CONST
 	REAL    :: BETA = 0.
 	REAL    :: THETA = 1.*PI
-	INTEGER :: LEN = 20 ! must be even and larger than 4
-	INTEGER :: MAX_CUT = 16
+	INTEGER :: LEN = 8 ! must be even and larger than 4
+	INTEGER :: MAX_CUT = 8
 	REAL    :: MAX_ERR = 0.
 END MODULE MODEL
 ! ############## PHYSICS ###################
@@ -25,11 +25,12 @@ SUBROUTINE SET_MPO(T)
 	TYPE(TENSOR), INTENT(OUT) :: T ! MPO tensor output
 	! local variables
 	TYPE(TENSOR) :: X, Y, U, S
-	COMPLEX, ALLOCATABLE :: A(:,:)
-	INTEGER :: DCUT
+	COMPLEX :: Q, B
 	
 ! ++++++++ set the vertex tensor here ++++++++
-	X =  TENSOR([2,2,2,2],[1,2,3,4,6,7,8,9,11,12,13,14],[Q**0.25,Q**0.25,Z1,Q**0.25,Z1,Q**(-0.25),Q**0.25,Z1,Q**(-0.25),Z1,Q**(-0.25),Q**(-0.25)])
+	Q = THETA*ZI
+	B = BETA*Z1
+	X = TENSOR([2,2,2,2],[1,2,3,4,6,7,8,9,11,12,13,14],[EXP(Q/4.),EXP(Q/4.),Z1,EXP(Q/4.),Z1,EXP(-Q/4.),EXP(Q/4.),Z1,EXP(-Q/4.),Z1,EXP(-Q/4.),EXP(-Q/4.)])
 ! ++++++++++++++++++++++++++++++++++++++++++++
 	! symm SVD of X to unitary U and diagonal S
 	CALL SYSVD(X,[1,4],[2,3],U,S)
@@ -55,7 +56,7 @@ SUBROUTINE DMRG(T, A, B)
 	INTEGER :: L, ITER
 	COMPLEX :: TVAL
 	! parameters
-	INTEGER, PARAMETER :: MAX_SWEEP = 5
+	INTEGER, PARAMETER :: MAX_SWEEP = 0
 	
 	! check validity of system size LEN
 	IF (MODULO(LEN,2) == 1 .OR. LEN <= 4) THEN
@@ -217,7 +218,7 @@ FUNCTION ANNEAL(TS, W) RESULT (TVAL)
 	COMPLEX :: TVAL
 	! parameters
 	INTEGER, PARAMETER :: N = 16 ! Krylov space dimension
-	INTEGER, PARAMETER :: MAX_ITER = 500 ! max interation
+	INTEGER, PARAMETER :: MAX_ITER = 50 ! max interation
 	REAL, PARAMETER :: TOL = 1.E-12 ! allowed error of Tval
 	! local variables
 	INTEGER :: DIM, I, J, K, ITER, INFO
