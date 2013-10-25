@@ -1,8 +1,8 @@
-GFORTRAN module version '6' created from TENSOR.f90 on Tue Oct 22 17:01:39 2013
-MD5:77324e16152801b7400ab28cc2864f73 -- If you edit this, you'll get what you deserve.
+GFORTRAN module version '6' created from TENSOR.f90 on Wed Oct 23 16:51:47 2013
+MD5:ad53aa7aef53e19ad4f4c341e339294b -- If you edit this, you'll get what you deserve.
 
-(() () () () () () () () () () () () () () () () () () () () () () ()
-() () () ())
+(() () () () () () () () () () () () () () () () () () () () () () () ()
+() () ())
 
 ()
 
@@ -178,39 +178,10 @@ INTEGER 4 0 0 INTEGER ()) 1 152 ((COMPONENT 8 172 'dims') (ARRAY (FULL 0)))))
 4 0 0 INTEGER ()) 0 '1'))) 0 () () () 0 0)
 152 'ten' '' 'ten' 150 ((VARIABLE IN UNKNOWN-PROC UNKNOWN UNKNOWN 0 0
 DUMMY) (DERIVED 8 0 0 DERIVED ()) 0 0 () () 0 () () () 0 0)
-181 'product' '(intrinsic)' 'product' 150 ((PROCEDURE UNKNOWN-INTENT
-UNKNOWN-PROC UNKNOWN UNKNOWN 0 0 FUNCTION) (UNKNOWN 0 0 0 UNKNOWN ()) 0
-0 () () 181 () () () 0 0)
-100 'tar' '' 'tar' 99 ((VARIABLE IN UNKNOWN-PROC UNKNOWN UNKNOWN 0 0
-DIMENSION DUMMY) (COMPLEX 8 0 0 COMPLEX ()) 0 0 () (1 0 EXPLICIT (
-CONSTANT (INTEGER 4 0 0 INTEGER ()) 0 '0') (OP (INTEGER 4 0 0 INTEGER ())
-0 MINUS (FUNCTION (INTEGER 4 0 0 INTEGER ()) 0 182 (('' (VARIABLE (
-INTEGER 4 0 0 INTEGER ()) 1 101 ((COMPONENT 8 172 'dims') (ARRAY (FULL 0)))))
-('' ()) ('' ())) '_gfortran_product_i4' 0 'product') (CONSTANT (INTEGER
-4 0 0 INTEGER ()) 0 '1'))) 0 () () () 0 0)
-101 'ten' '' 'ten' 99 ((VARIABLE INOUT UNKNOWN-PROC UNKNOWN UNKNOWN 0 0
-DUMMY) (DERIVED 8 0 0 DERIVED ()) 0 0 () () 0 () () () 0 0)
-182 'product' '(intrinsic)' 'product' 99 ((PROCEDURE UNKNOWN-INTENT
-UNKNOWN-PROC UNKNOWN UNKNOWN 0 0 FUNCTION) (UNKNOWN 0 0 0 UNKNOWN ()) 0
-0 () () 182 () () () 0 0)
-127 'tar' '' 'tar' 126 ((VARIABLE IN UNKNOWN-PROC UNKNOWN UNKNOWN 0 0
-DIMENSION DUMMY) (COMPLEX 8 0 0 COMPLEX ()) 0 0 () (1 0 EXPLICIT (
-CONSTANT (INTEGER 4 0 0 INTEGER ()) 0 '0') (OP (INTEGER 4 0 0 INTEGER ())
-0 MINUS (FUNCTION (INTEGER 4 0 0 INTEGER ()) 0 183 (('' (VARIABLE (
-INTEGER 4 0 0 INTEGER ()) 1 128 ((COMPONENT 8 172 'dims') (ARRAY (FULL 0)))))
-('' ()) ('' ())) '_gfortran_product_i4' 0 'product') (CONSTANT (INTEGER
-4 0 0 INTEGER ()) 0 '1'))) 0 () () () 0 0)
-128 'ten' '' 'ten' 126 ((VARIABLE IN UNKNOWN-PROC UNKNOWN UNKNOWN 0 0
-DUMMY) (DERIVED 8 0 0 DERIVED ()) 0 0 () () 0 () () () 0 0)
-129 'val' '' 'val' 126 ((VARIABLE UNKNOWN-INTENT UNKNOWN-PROC UNKNOWN
-UNKNOWN 0 0 RESULT) (COMPLEX 8 0 0 COMPLEX ()) 0 0 () () 0 () () () 0 0)
-183 'product' '(intrinsic)' 'product' 126 ((PROCEDURE UNKNOWN-INTENT
-UNKNOWN-PROC UNKNOWN UNKNOWN 0 0 FUNCTION) (UNKNOWN 0 0 0 UNKNOWN ()) 0
-0 () () 183 () () () 0 0)
 122 'tar' '' 'tar' 121 ((VARIABLE INOUT UNKNOWN-PROC UNKNOWN UNKNOWN 0 0
 DIMENSION DUMMY) (COMPLEX 8 0 0 COMPLEX ()) 0 0 () (1 0 EXPLICIT (
 CONSTANT (INTEGER 4 0 0 INTEGER ()) 0 '0') (OP (INTEGER 4 0 0 INTEGER ())
-0 MINUS (FUNCTION (INTEGER 4 0 0 INTEGER ()) 0 184 (('' (VARIABLE (
+0 MINUS (FUNCTION (INTEGER 4 0 0 INTEGER ()) 0 182 (('' (VARIABLE (
 INTEGER 4 0 0 INTEGER ()) 1 123 ((COMPONENT 8 172 'dims') (ARRAY (FULL 0)))))
 ('' ()) ('' ())) '_gfortran_product_i4' 0 'product') (CONSTANT (INTEGER
 4 0 0 INTEGER ()) 0 '1'))) 0 () () () 0 0)
@@ -218,6 +189,9 @@ INTEGER 4 0 0 INTEGER ()) 1 123 ((COMPONENT 8 172 'dims') (ARRAY (FULL 0)))))
 DUMMY) (DERIVED 8 0 0 DERIVED ()) 0 0 () () 0 () () () 0 0)
 124 'val' '' 'val' 121 ((VARIABLE IN UNKNOWN-PROC UNKNOWN UNKNOWN 0 0
 OPTIONAL DUMMY) (COMPLEX 8 0 0 COMPLEX ()) 0 0 () () 0 () () () 0 0)
+182 'product' '(intrinsic)' 'product' 121 ((PROCEDURE UNKNOWN-INTENT
+UNKNOWN-PROC UNKNOWN UNKNOWN 0 0 FUNCTION) (UNKNOWN 0 0 0 UNKNOWN ()) 0
+0 () () 182 () () () 0 0)
 118 'ten' '' 'ten' 117 ((VARIABLE IN UNKNOWN-PROC UNKNOWN UNKNOWN 0 0
 DUMMY) (DERIVED 8 0 0 DERIVED ()) 0 0 () () 0 () () () 0 0)
 119 'ten0' '' 'ten0' 117 ((VARIABLE UNKNOWN-INTENT UNKNOWN-PROC UNKNOWN
@@ -454,7 +428,33 @@ UNKNOWN 0 0 DUMMY) (CHARACTER 1 0 0 CHARACTER (())) 0 0 () () 0 () () ()
 0 0)
 138 'ten' '' 'ten' 136 ((VARIABLE OUT UNKNOWN-PROC UNKNOWN UNKNOWN 0 0
 DUMMY) (DERIVED 8 0 0 DERIVED ()) 0 0 () () 0 () () () 0 0)
-184 'product' '(intrinsic)' 'product' 121 ((PROCEDURE UNKNOWN-INTENT
+181 'product' '(intrinsic)' 'product' 150 ((PROCEDURE UNKNOWN-INTENT
+UNKNOWN-PROC UNKNOWN UNKNOWN 0 0 FUNCTION) (UNKNOWN 0 0 0 UNKNOWN ()) 0
+0 () () 181 () () () 0 0)
+100 'tar' '' 'tar' 99 ((VARIABLE IN UNKNOWN-PROC UNKNOWN UNKNOWN 0 0
+DIMENSION DUMMY) (COMPLEX 8 0 0 COMPLEX ()) 0 0 () (1 0 EXPLICIT (
+CONSTANT (INTEGER 4 0 0 INTEGER ()) 0 '0') (OP (INTEGER 4 0 0 INTEGER ())
+0 MINUS (FUNCTION (INTEGER 4 0 0 INTEGER ()) 0 183 (('' (VARIABLE (
+INTEGER 4 0 0 INTEGER ()) 1 101 ((COMPONENT 8 172 'dims') (ARRAY (FULL 0)))))
+('' ()) ('' ())) '_gfortran_product_i4' 0 'product') (CONSTANT (INTEGER
+4 0 0 INTEGER ()) 0 '1'))) 0 () () () 0 0)
+101 'ten' '' 'ten' 99 ((VARIABLE INOUT UNKNOWN-PROC UNKNOWN UNKNOWN 0 0
+DUMMY) (DERIVED 8 0 0 DERIVED ()) 0 0 () () 0 () () () 0 0)
+183 'product' '(intrinsic)' 'product' 99 ((PROCEDURE UNKNOWN-INTENT
+UNKNOWN-PROC UNKNOWN UNKNOWN 0 0 FUNCTION) (UNKNOWN 0 0 0 UNKNOWN ()) 0
+0 () () 183 () () () 0 0)
+127 'tar' '' 'tar' 126 ((VARIABLE IN UNKNOWN-PROC UNKNOWN UNKNOWN 0 0
+DIMENSION DUMMY) (COMPLEX 8 0 0 COMPLEX ()) 0 0 () (1 0 EXPLICIT (
+CONSTANT (INTEGER 4 0 0 INTEGER ()) 0 '0') (OP (INTEGER 4 0 0 INTEGER ())
+0 MINUS (FUNCTION (INTEGER 4 0 0 INTEGER ()) 0 184 (('' (VARIABLE (
+INTEGER 4 0 0 INTEGER ()) 1 128 ((COMPONENT 8 172 'dims') (ARRAY (FULL 0)))))
+('' ()) ('' ())) '_gfortran_product_i4' 0 'product') (CONSTANT (INTEGER
+4 0 0 INTEGER ()) 0 '1'))) 0 () () () 0 0)
+128 'ten' '' 'ten' 126 ((VARIABLE IN UNKNOWN-PROC UNKNOWN UNKNOWN 0 0
+DUMMY) (DERIVED 8 0 0 DERIVED ()) 0 0 () () 0 () () () 0 0)
+129 'val' '' 'val' 126 ((VARIABLE UNKNOWN-INTENT UNKNOWN-PROC UNKNOWN
+UNKNOWN 0 0 RESULT) (COMPLEX 8 0 0 COMPLEX ()) 0 0 () () 0 () () () 0 0)
+184 'product' '(intrinsic)' 'product' 126 ((PROCEDURE UNKNOWN-INTENT
 UNKNOWN-PROC UNKNOWN UNKNOWN 0 0 FUNCTION) (UNKNOWN 0 0 0 UNKNOWN ()) 0
 0 () () 184 () () () 0 0)
 )

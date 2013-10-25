@@ -1315,7 +1315,6 @@ END FUNCTION NORM
 FUNCTION INV_SQRT(A) RESULT(B)
 ! input: A must be a square matrix
 ! output: INV_SQRT(A) = A^(-1/2)
-	USE MATHIO
 	COMPLEX, INTENT(IN) :: A(:,:)
 	COMPLEX, ALLOCATABLE :: B(:,:)
 	! local variable
