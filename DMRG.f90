@@ -9,19 +9,33 @@ END MODULE CONST
 MODULE MODEL
 	USE CONST
 !	REAL    :: BETA = 0.440687
-	REAL    :: BETA = 0.
-	REAL    :: THETA = 1.*PI
-	INTEGER :: LEN = 20 ! must be even and larger than 4
-	INTEGER :: MAX_CUT = 18
+	REAL    :: BETA = 0.43
+	REAL    :: THETA = 0.*PI
+	INTEGER :: LEN = 10 ! must be even and larger than 4
+	INTEGER :: MAX_CUT = 8
 	REAL    :: MAX_ERR = 0.
 END MODULE MODEL
 ! ############## PHYSICS ###################
 MODULE PHYSICS
 	USE TENSORIAL
 CONTAINS
+! tensor conventions
+! MPO (by default B-type):
+!   A-type       B-type
+!     ╭            ╮
+!     3            3
+! ─ 2 A 1 ─    ─ 1 B 2 ─
+!     4            4
+!     ╰            ╯
+! MPS (by default A-type):
+!   A-type       B-type
+!     │            │
+!     2            2
+! ─ 1 A 3 ─    ─ 3 B 1 ─
 ! ------------ set MPO tensor ---------------
 ! square lattice MPO
 SUBROUTINE SET_MPO(T)
+! T is by default B-type MPO tensor
 	USE MODEL
 	TYPE(TENSOR), INTENT(OUT) :: T ! MPO tensor output
 	! local variables
@@ -37,12 +51,12 @@ SUBROUTINE SET_MPO(T)
 	! symm SVD of X to unitary U and diagonal S
 	CALL SYSVD(X,[1,4],[3,2],U,S)
 	S%VALS = SQRT(S%VALS) ! split S to half
-	U = TEN_PROD(U,S,[3],[1]) ! attach the half S to U
+	U = TEN_PROD(S,U,[2],[3]) ! attach the half S to U
 	! set Y tensor
 	Y = EYE_TEN([2,2,2])
 	! contract U from both sides with Y
-	U = TEN_PROD(Y,U,[1],[2])
-	T = TEN_PROD(U,U,[1,3],[3,1])
+	U = TEN_PROD(U,Y,[3],[3])
+	T = TEN_TRANS(TEN_PROD(U,U,[2,4],[4,2]),[1,3,2,4])
 !	T%VALS = T%VALS/2/EXP(ABS(BETA))
 END SUBROUTINE SET_MPO
 ! ----------- DMRG -----------
@@ -54,7 +68,7 @@ SUBROUTINE DMRG(T, A, B)
 	TYPE(TENSOR), INTENT(IN)  :: T
 	TYPE(TENSOR), INTENT(OUT) :: A(LEN), B(LEN)
 	! local tensor
-	TYPE(TENSOR) :: TA(LEN), TB(LEN), S
+	TYPE(TENSOR) :: TA, TB, FA(LEN), FB(LEN), S
 	! local variables
 	INTEGER :: L, ITER
 	COMPLEX :: TVAL
@@ -66,39 +80,42 @@ SUBROUTINE DMRG(T, A, B)
 		WRITE (*,'(A)') 'DMRG::xlen: LEN must be even and greater than 4.'
 		STOP
 	END IF
+	! set left- and right- MPO
+	TB = T ! assuming right convention
+	TA = TEN_TRANS(T,[2,1,3,4]) ! left given by 1 <-> 2
 	! iDMRG (warm up)
 	DO L = 1, LEN/2
-		CALL IDMRG(L, T, TA, TB, A, B, S, TVAL)
+		CALL IDMRG(L, TA, TB, FA, FB, A, B, S, TVAL)
 		CALL SHOW_DMRG_STATUS('I',L,TVAL,S%VALS)
 	END DO
 	! fDMRG (first sweep)
 	DO L = LEN/2+1, LEN
-		CALL FDMRG(L, T, TA, TB, A, B, S, TVAL)
+		CALL FDMRG(L, TA, TB, FA, FB, A, B, S, TVAL)
 		CALL SHOW_DMRG_STATUS('F',L,TVAL,S%VALS)
 	END DO
 	! fDMRG sweeps
 	DO ITER = 1, SWEEPS
 		! fFDMRG (backward sweep)
 		DO L = 1, LEN
-			CALL FDMRG(L, T, TB, TA, B, A, S, TVAL)
+			CALL FDMRG(L, TB, TA, FB, FA, B, A, S, TVAL)
 			CALL SHOW_DMRG_STATUS('B',L,TVAL,S%VALS)
 		END DO
 		! fFDMRG (forward sweep)
 		DO L = 1, LEN
-			CALL FDMRG(L, T, TA, TB, A, B, S, TVAL)
+			CALL FDMRG(L, TA, TB, FA, FB, A, B, S, TVAL)
 			CALL SHOW_DMRG_STATUS('F',L,TVAL,S%VALS)
 		END DO
 	END DO
 END SUBROUTINE DMRG
 ! infinite-size DMRG step
-SUBROUTINE IDMRG(L, T, TA, TB, A, B, S, TVAL)
+SUBROUTINE IDMRG(L, TA, TB, FA, FB, A, B, S, TVAL)
 ! perform one step of iDMRG at L
-! input: L - lattice position, T - MPO
-! inout: TA, TB, A, B, S0, S will be updated
+! input: L - lattice position, TA,TB - MPO
+! inout: FA, FB, A, B, S0, S will be updated
 	USE MODEL
 	INTEGER, INTENT(IN)      :: L
-	TYPE(TENSOR), INTENT(IN) :: T
-	TYPE(TENSOR), INTENT(INOUT) :: TA(:), TB(:), A(:), B(:), S
+	TYPE(TENSOR), INTENT(IN) :: TA, TB
+	TYPE(TENSOR), INTENT(INOUT) :: FA(:), FB(:), A(:), B(:), S
 	COMPLEX, INTENT(INOUT) :: TVAL
 	! local tensors
 	TYPE(TENSOR) :: W, TS
@@ -108,14 +125,17 @@ SUBROUTINE IDMRG(L, T, TA, TB, A, B, S, TVAL)
 	
 	IF (L == 1) THEN
 		! initialize tensors
-		! boundary MPO
-		TA(1) = T
-		TB(1) = T
-		! boundary MPS
-		DPHY = T%DIMS(1) ! get physical dim
+		! set initial block MPO
+		FA(1) = TA
+		FB(1) = TB
+		! set initial MPS (boundary)
+		DPHY = TB%DIMS(3) ! get physical dim
+		!   2
+		! 1 A 3
+		! initial MPS transfers d.o.f. from leg 2 to 3, with leg 1 dummy
 		A(1) = TEN_PROD(TENSOR([1],[0],[Z1]),EYE_TEN([DPHY,DPHY]))
-		B(1) = A(1)
-		! initial entanglement mat
+		B(1) = A(1) ! B is the same as A
+		! set initial entanglement mat
 		S0 = EYE_TEN([1,1])
 		S = EYE_TEN([DPHY,DPHY],SQRT(Z1/DPHY))
 		TVAL = Z1 ! return initial Tval
@@ -124,25 +144,25 @@ SUBROUTINE IDMRG(L, T, TA, TB, A, B, S, TVAL)
 		S0%VALS = Z1/S0%VALS ! cal S0^(-1) -> S0
 		W = MAKE_W5(A(L-1), B(L-1), S, S0)
 		S0 = S ! S0 is used, update to S
-		TS = GET_TS(T, TA(L-1), TB(L-1)) ! construct TS
+		TS = MAKE_TS(TA, TB, FA(L-1), FB(L-1)) ! construct TS
 		TVAL = ANNEAL(TS, W) ! anneal W by TS
 		! SVD split W, and update A, B, S
 		CALL SVD(W,[1,2],[3,4],A(L),B(L),S,MAX_CUT,MAX_ERR)
-		! update TA, TB
-		TA(L) = GET_TX(TA(L-1), T, A(L))
-		TB(L) = GET_TX(TB(L-1), T, B(L))
+		! update FA, FB
+		FA(L) = NEW_TX(TA, A(L), FA(L-1))
+		FB(L) = NEW_TX(TB, B(L), FB(L-1))
 	END IF
 END SUBROUTINE IDMRG
-! finite-size DMRG step
-SUBROUTINE FDMRG(L, T, TA, TB, A, B, S, TVAL)
+! finite-size DMRG step (forward convention)
+SUBROUTINE FDMRG(L, TA, TB, FA, FB, A, B, S, TVAL)
 ! perform one step of fDMRG at L (forward dirction)
-! input: L - lattice position, T - MPO
-! inout: TA, A, S will be updated
-! on output: TB is not touched, but B is updated
+! input: L - lattice position, TA, TB - MPO
+! inout: FA, A, S will be updated
+! on output: FB is not touched, but B is updated
 	USE MODEL
 	INTEGER, INTENT(IN)      :: L
-	TYPE(TENSOR), INTENT(IN) :: T
-	TYPE(TENSOR), INTENT(INOUT) :: TA(:), TB(:), A(:), B(:), S
+	TYPE(TENSOR), INTENT(IN) :: TA, TB
+	TYPE(TENSOR), INTENT(INOUT) :: FA(:), FB(:), A(:), B(:), S
 	COMPLEX, INTENT(INOUT) :: TVAL
 	! local tensors
 	TYPE(TENSOR) :: W, TS
@@ -150,79 +170,136 @@ SUBROUTINE FDMRG(L, T, TA, TB, A, B, S, TVAL)
 	
 	IF (L == 1) THEN
 		! A(1), no update, obtained from the last sweep
-		! update TA, to restart
+		! update FA, to restart
 		! SSB treatment to be implemented here
-		TA(1) = TEN_FLATTEN(TEN_PROD(TEN_PROD(TEN_CONJG(A(1)),T,[2],[1]),A(1), [4],[2]), [2,0,1,4,5,0,6,0,3])
+		FA(1) = NEW_TX(TA, A(1))
 		TVAL = TVAL0 ! retrieve Tval from last save
 	ELSEIF (L == LEN-1) THEN
 		! estimate trial W
 		W = MAKE_W3(S, B(2), B(1))
-		TS = GET_TS1(T, TA(LEN-2)) ! construct TS (boundary)
+		TS = MAKE_TS(TA, TB, FA(LEN-2)) ! construct TS (boundary)
 		TVAL = ANNEAL(TS, W) ! anneal W by TS
 		TVAL0 = TVAL ! save Tval at the last site
 		! SVD split W, update A, S
 		CALL SVD(W,[1,2],[3,4],A(LEN-1),B(1),S,MAX_CUT,MAX_ERR)
-		! update TA
-		TA(LEN-1) = GET_TX(TA(LEN-2), T, A(LEN-1))
+		! update FA
+		FA(LEN-1) = NEW_TX(TA, A(LEN-1), FA(LEN-2))
 	ELSEIF (L == LEN) THEN
 		! update the ending A by S*B
 		A(LEN) = TEN_TRANS(TEN_PROD(S,B(1),[2],[3]),[1,3,2])
-		! update TA
-		TA(LEN) = GET_TX(TA(LEN-1), T, A(LEN))
-		! cal Tval by Tr (for the whole system)
-		TS = TEN_TRACE(TA(LEN),[1,2],[3,4])
+		! update FA
+		FA(LEN) = NEW_TX(TA, A(LEN), FA(LEN-1))
+		! cal Tval by TB (for the whole system)
+		TS = TEN_TRACE(FA(LEN),[1,3],[2,4])
 		TVAL = TS%VALS(1)
 	ELSE ! 2 <= L <= LEN-2
 		! estimate trial W
 		W = MAKE_W3(S, B(LEN-L+1), B(LEN-L))
-		TS = GET_TS(T, TA(L-1), TB(LEN-L-1)) ! construct TS
+		TS = MAKE_TS(TA, TB, FA(L-1), FB(LEN-L-1)) ! construct TS
 		TVAL = ANNEAL(TS, W) ! anneal W by TS
 		! SVD split W, update A, S
 		CALL SVD(W,[1,2],[3,4],A(L),B(LEN-L),S,MAX_CUT,MAX_ERR)
-		! update TA
-		TA(L) = GET_TX(TA(L-1), T, A(L))
+		! update FA
+		FA(L) = NEW_TX(TA, A(L), FA(L-1))
 	END IF
 END SUBROUTINE FDMRG
-! estimate 2-site trial state
+! estimate iDMG trial state
 FUNCTION MAKE_W5(A, B, S, SI) RESULT(W)
+! call by IDMRG
 	TYPE(TENSOR), INTENT(IN) :: A, B, S, SI
 	TYPE(TENSOR) :: W
 	
+	! W = 
+	!               2                4
+	!               │                │
+	!               2                2
+	! 1 ─ 1 S 2 ─ 3 B 1 ─ 1 SI 2 ─ 1 A 3 ─ 2 S 1 ─ 3
 	W = TEN_PROD(TEN_PROD(TEN_PROD(S,B,[2],[3]),SI,[2],[1]),TEN_PROD(S,A,[2],[3]),[3],[2])
 END FUNCTION MAKE_W5
-! estimate 1-site trial state
+! estimate fDMRG trial state
 FUNCTION MAKE_W3(S, X1, X2) RESULT(W)
+! called by IDMRG
+! X tensor can be either A or B type
 	TYPE(TENSOR), INTENT(IN) :: S, X1, X2
 	TYPE(TENSOR) :: W
 	
+	! W = 
+	!               2        4
+	!               │        │
+	!               2        2
+	! 1 ─ 1 S 2 ─ 3 X1 1 ─ 3 X2 1 ─ 3
 	W = TEN_PROD(TEN_PROD(S,X1,[2],[3]),X2,[2],[3])
 END FUNCTION MAKE_W3
-! construct 2-block-2-site system tensor
-FUNCTION GET_TS(T, TA, TB) RESULT (TS)
-	TYPE(TENSOR), INTENT(IN) :: T, TA, TB
+! construct system tensor
+FUNCTION MAKE_TS(TA, TB, FA, FB) RESULT (TS)
+! input: TA,TB - site MPO, FA - A-block MPO, FB - B-block MPO
+! output: TS - system MPO
+! FB is optional: present => bulk, missing => boundary 
+	TYPE(TENSOR), INTENT(IN) :: TA, TB, FA
+	TYPE(TENSOR), OPTIONAL, INTENT(IN) :: FB
 	TYPE(TENSOR) :: TS
 	
-	TS = TEN_PROD(TEN_PROD(TA,T,[4],[2]),TEN_PROD(TB,T,[4],[2]),[2,6],[2,6])
-END FUNCTION GET_TS
-! construct 1-block-2-site system tensor (at boundary)
-FUNCTION GET_TS1(T, TA) RESULT (TS)
-	TYPE(TENSOR), INTENT(IN) :: T, TA
-	TYPE(TENSOR) :: TS
-	
-	TS = TEN_PROD(TEN_PROD(TEN_PROD(TA,T,[4],[2]),EYE_TEN([1,1])),T,[2,6],[2,4])
-END FUNCTION GET_TS1
+	IF (PRESENT(FB)) THEN ! bulk algorithm
+		! TS (bulk) = 
+		!     1        3        7        5
+		!     │        │        │        │
+		!     3        3        3        3
+		! ╭ 2 FA 1 ─ 2 TA 1 ─ 1 TB 2 ─ 1 FB 2 ╮
+		! │   4        4        4        4    │
+		! │   │        │        │        │    │
+		! │   2        4        8        6    │
+		! ╰───────────────────────────────────╯
+		TS = TEN_PROD(TEN_PROD(FA,TA,[1],[2]),TEN_PROD(FB,TB,[1],[2]),[1,4],[1,4])
+	ELSE ! boundary algorithm
+		! TS (boundary) = 
+		! 1        3        7             5
+		! │        │        │             │
+		! 3        3        3             1
+		! FA 1 ─ 2 TA 1 ─ 1 TB 2 ─ 2 FA ⊗ I
+		! 4        4        4             2
+		! │        │        │             │
+		! 2        4        8             6
+		TS = TEN_PROD(TEN_PROD(TEN_PROD(FA,TA,[1],[2]),EYE_TEN([1,1])),TB,[1,4],[2,1])
+	END IF
+END FUNCTION MAKE_TS
 ! update TX given T and X
-FUNCTION GET_TX(TX, T, X) RESULT (TX1)
-! input: TX - block tensor, T - site tensor (MPO), X - projector
-! return the enlarged block tensor TX1
-	TYPE(TENSOR), INTENT(IN) :: TX, T, X
+FUNCTION NEW_TX(T, X, TX) RESULT (TX1)
+! input: T - MPO, X - MPS, TX - block MPO
+! output: TX1 - new block MPO by packing T and X into the old
+! TX optional: if present => bulk, missing => boundary
+! zipper-order contraction algorithm is used
+	TYPE(TENSOR), INTENT(IN) :: T, X
+	TYPE(TENSOR), OPTIONAL, INTENT(IN) :: TX
 	TYPE(TENSOR) :: TX1
 	
-	! zipper-order contraction algorithm
-	TX1 = TEN_PROD(TEN_PROD(TEN_PROD(TEN_CONJG(X),TX,[1],[1]),X,[4],[1]),T,[1,4,5],[1,2,3])
-END FUNCTION GET_TX
+	IF (PRESENT(TX)) THEN ! bulk algorithm
+		! TX1 (bulk) = 
+		!       ╭──── 1 X* 3 ─ 3
+		!       │        2
+		!       │        │
+		!       3        3
+		! 2 ─ 2 TX 1 ─ 2 T 1 ─ 1
+		!       4        4
+		!       │        │
+		!       │        2 
+		!       ╰───── 1 X 3 ─ 4
+		TX1 = TEN_PROD(T,TEN_PROD(TEN_PROD(TX,TEN_CONJG(X),[3],[1]),X,[3],[1]),[2,3,4],[1,3,5])
+	ELSE ! boundary algorithm
+		! TX1 (boundary) = 
+		!   ╭ 1 X* 3 ─ 3
+		!   │    2
+		!   │    │
+		!   ╯    3
+		! 2 ── 2 T 1 ─ 1
+		!   ╮    4
+		!   │    │
+		!   │    2 
+		!   ╰─ 1 X 3 ─ 4
+		TX1 = TEN_FLATTEN(TEN_PROD(TEN_PROD(T,TEN_CONJG(X),[3],[2]),X,[3],[2]), [1,0,2,3,5,0,4,0,6])
+	END IF
+END FUNCTION NEW_TX
 ! ----------- Solvers ------------
-! anneal the state W to fix point of TS
+! anneal the state W to the ground state of TS
 FUNCTION ANNEAL(TS, W) RESULT (TVAL)
 ! input: TS - system transfer tensor, W - state
 ! on output: W  is modified to the fixed point state
@@ -520,83 +597,204 @@ FUNCTION LOC_MAX_MODE(D) RESULT (P)
 	END DO
 END FUNCTION LOC_MAX_MODE
 ! ----------- Measure -----------
-! 2-site correlation of MPS
-FUNCTION CORR2(X, O1, O2) RESULT (CORR)
-! input: X - MPS tensor, O1, O2 -  observables
-! output: CORR - correlation function
+! measure operators O on MPS X
+FUNCTION MEASURE(X, O) RESULT (M)
+! input: X - MPSs, O - MPOs
+! output: M - correlation function
+! M is output in terms of a tensor:
+! leg <-> operator, index on leg <-> position of operator 
 	USE MODEL
-	TYPE(TENSOR), INTENT(IN) :: X(LEN), O1, O2
-	COMPLEX :: CORR(LEN)
+	TYPE(TENSOR), INTENT(IN) :: X(:), O(:)
+	TYPE(TENSOR) :: M
 	! local tensors
-	TYPE(TENSOR) :: D2
+	TYPE(TENSOR) :: E
 	! local variables
-	INTEGER :: L
+	INTEGER :: L, K, N
 	
-	! assuming X(:) is left-canonical, go backward
-	D2 = MAKE_D(X(LEN), O2) ! make initial D2
-	! now D2 carries the measurement of O2 at the boundary
-	CORR = Z0 ! clear CORR
-	DO L = LEN-1, 1, -1
-		! measure O1 on site L with D2
-		CORR(L) = MEASURE(D2, X(L), O1)
-		! grow D2
-		IF (L > 1) D2 = GROW_D(D2, X(L))
-	END DO
-END FUNCTION CORR2
-! make double tensor
-FUNCTION MAKE_D(X, O) RESULT(D)
-! input: X - MPS tensor, O - observable matrix
-! output: D - double tensor, D = XH*O*X
-! if O is absent, treat O = 1
-	TYPE(TENSOR), INTENT(IN) :: X
-	TYPE(TENSOR), OPTIONAL, INTENT(IN) :: O
-	TYPE(TENSOR) :: D
-	
-	IF (PRESENT(O)) THEN
-		D = TEN_PROD(TEN_PROD(TEN_CONJG(X),O,[2],[1]),X,[2,3],[3,2])
-	ELSE ! O is absent
-		D = TEN_PROD(TEN_CONJG(X),X,[2,3],[2,3])
+	L = SIZE(X) ! get the num of sites
+	K = SIZE(O) ! get the num of operators
+	! deal with some special cases
+	IF (K == 0) THEN ! if no operator
+		M = ZERO_TEN([INTEGER::]) ! return null tensor
+		RETURN	
 	END IF
-END FUNCTION MAKE_D
-! grow double tensor
-FUNCTION GROW_D(D, X, O) RESULT(D1)
-! input: D - double tensor, X - MPS tensor
-! output: D1 - new double tensor, D1 = (XH*O*X)*D
-! if O is absent, treat O = 1
-	TYPE(TENSOR), INTENT(IN) :: D, X
-	TYPE(TENSOR), OPTIONAL, INTENT(IN) :: O
-	TYPE(TENSOR) :: D1
-	
-	IF (PRESENT(O)) THEN
-		D1 = TEN_PROD(TEN_PROD(TEN_PROD(TEN_CONJG(X),O,[2],[1]),X,[3],[2]),D,[2,4],[1,2])
-	ELSE ! O is absent
-		D1 = TEN_PROD(TEN_PROD(TEN_CONJG(X),D,[3],[1]),X,[2,3],[2,3])
+	IF (L == 0) THEN ! if no lattice
+		M = ZERO_TEN([(L,L=1,K)]) ! return null tensor
+		RETURN
 	END IF
-END FUNCTION GROW_D
-! take measurement
-FUNCTION MEASURE(D, X, O) RESULT (R)
-! input: D - double tensor, X - MPS tensor, O - observable mat
-! output: R - result of measurement R = Tr (XH*O*X)*D
-! if O is absent, treat O = 1
-	USE CONST
-	TYPE(TENSOR), INTENT(IN) :: D, X
-	TYPE(TENSOR), OPTIONAL, INTENT(IN) :: O
-	COMPLEX :: R
-	! local tensor
-	TYPE(TENSOR) :: TR
-	
-	IF (PRESENT(O)) THEN
-		TR = TEN_PROD(TEN_PROD(TEN_PROD(TEN_CONJG(X),O,[2],[1]),X,[1,3],[1,2]),D,[1,2],[1,2])
-	ELSE ! O is absent
-		TR = TEN_PROD(TEN_PROD(TEN_CONJG(X),X,[1,2],[1,2]),D,[1,2],[1,2])
-	END IF
-	! take the measurement value
-	IF (SIZE(TR%VALS) == 0) THEN ! if TR is empty
-		R = Z0 ! result is zero
-	ELSE ! if TR is finite
-		R = TR%VALS(1) ! put the result
-	END IF
+	! now L and K are both non-zero
+ 	N = BINOMIAL(L, K) ! cal the size of correlation func
+ 	IF (N == 0) THEN ! if not able to put down operators
+ 		M = ZERO_TEN([(L,N=1,K)]) ! return null tensor
+ 		RETURN
+ 	END IF
+ 	! now N is also non-zero, the normal case
+	! allocate space for M
+	ALLOCATE(M%DIMS(K),M%INDS(N),M%VALS(N))
+	M%DIMS = L  ! each leg can go through the lattice L
+	M%INDS = 0  ! clean up
+	M%VALS = Z0 ! clean up
+	! carry out recursive measurement
+	CALL SET_M(L, M%INDS, M%VALS, X, O) ! enter without environment
+	! on exit, M has been filled with measurement data, return
 END FUNCTION MEASURE
+! measurement kernel
+RECURSIVE SUBROUTINE SET_M(L0, INDS, VALS, X, O, E0)
+! input: L0 - total lattice size
+!        INDS - indices, VALS - measurement values
+!        X - MPSs, O - MPOs, E0 - environment
+! output: INDS, VALS - modified by new measurement data
+! E0 optional: if missing, make it initialized
+	INTEGER, INTENT(IN) :: L0
+	INTEGER, INTENT(INOUT) :: INDS(:)
+	COMPLEX, INTENT(INOUT) :: VALS(:)
+	TYPE(TENSOR), INTENT(IN) :: X(:), O(:)
+	TYPE(TENSOR), OPTIONAL, INTENT(IN) :: E0
+	! local tensor
+	TYPE(TENSOR) :: E
+	! local variables
+	INTEGER :: L, K, I, N1, N2
+	
+	L = SIZE(X) ! get the num of sites
+	K = SIZE(O) ! get the num of operators
+	! check E0 input
+	IF (PRESENT(E0)) THEN ! if given
+		E = E0 ! use it as the environment
+	ELSE ! if not given, make it from O(K)
+		SELECT CASE (SIZE(O(K)%DIMS)) ! branch by # of legs
+			CASE (2) ! 2-leg case
+				E = TEN_PROD(EYE_TEN([1,1]),EYE_TEN(O(K)%DIMS([1,2])))
+			CASE (4) ! 4-leg case
+				E = TEN_PROD(EYE_TEN(O(K)%DIMS([1,2])),EYE_TEN(O(K)%DIMS([3,4])))
+		END SELECT
+	END IF
+	! now E has been set, lay down operators
+	IF (K == 1) THEN ! for the last operator O(1)
+		! make direct measurement on the current lattice
+		DO I = L, 1, -1
+			! record the index of measurement
+			INDS(I) = I - 1
+			! grow E with O(1) at X(I) and evaluate
+			VALS(I) = EVALUATE(GROW(E, X(I), O(1))) ! rec the data
+			! now E can be updated to I-1 lattice
+			E = GROW(E, X(I)) ! by absorbing X(I)
+		END DO
+	ELSE
+		N1 = SIZE(VALS) ! get the size of correlation function
+		DO I = L, 1, -1
+			! cal the workspace range
+			N2 = N1 ! upper range from previous lower range
+			N1 = N1*(I-K)/I ! lower range update
+			! grow E with the last O(K) at X(I)
+			! passing the remaining X and O to the lower level SET_M
+			! with the workspace bounded by N1+1:N2 
+			CALL SET_M(L0,INDS(N1+1:N2),VALS(N1+1:N2),X(:I-1),O(:K-1),GROW(E,X(I),O(K)))
+			! on return, VALS contains the measurement values
+			! and INDS contains the indices in the lower level
+			! for this level, inds must be lifted by L0 and shifted by (I-1)
+			INDS(N1+1:N2) = INDS(N1+1:N2) + (I-1)*L0**(K-1)
+			! the measurement has complete
+			! now E can be updated to I-1 lattice
+			E = GROW(E, X(I)) ! by absorbing X(I)
+		END DO
+	END IF
+END SUBROUTINE SET_M
+! grow environment tensor
+FUNCTION GROW(E, X, O) RESULT(E1)
+! input: E - environment tensor, X - MPS tensor
+! output: E1 - new environment tensor
+! if O is absent, treat O = 1
+	TYPE(TENSOR), INTENT(IN) :: E, X
+	TYPE(TENSOR), OPTIONAL, INTENT(IN) :: O
+	TYPE(TENSOR) :: E1
+	
+	IF (PRESENT(O)) THEN ! O is given
+		SELECT CASE (SIZE(O%DIMS)) ! branch by # of legs of O
+			CASE (2) ! 2-leg case
+				! E1 (2-leg O) = 
+				! 3 ─ 1 X* 3 ──────╮
+				!       2          │
+				!       │          │
+				!       1          3
+				!       O    1 ─ 1 E 2 ─ 2
+				!       2          4
+				!       │          │
+				!       2          │
+				! 4 ─ 1 X 3 ───────╯
+				E1 = TEN_PROD(O,TEN_PROD(TEN_PROD(E,TEN_CONJG(X),[3],[3]),X,[3],[3]),[1,2],[4,6])			
+			CASE (4) ! 4-leg case
+				! E1 (4-leg O) = 
+				! 3 ─ 1 X* 3 ────╮
+				!       2        │
+				!       │        │
+				!       3        3
+				! 1 ─ 1 O 2 ── 1 E 2 ─ 2
+				!       4        4
+				!       │        │
+				!       2        │
+				! 4 ─ 1 X 3 ─────╯
+				E1 = TEN_PROD(O,TEN_PROD(TEN_PROD(E,TEN_CONJG(X),[3],[3]),X,[3],[3]),[2,3,4],[1,4,6])			
+		END SELECT
+	ELSE ! O is absent
+		! E1 (missing O) = 
+		! 3 ─ 1 X* 3 ──────╮
+		!       2          3
+		!       │    1 ─ 1 E 2 ─ 2
+		!       2          4
+		! 4 ─ 1 X 3 ───────╯
+		E1 = TEN_PROD(TEN_PROD(E,TEN_CONJG(X),[3],[3]),X,[3,5],[3,2])
+	END IF
+END FUNCTION GROW
+! evaluate environment tensor
+FUNCTION EVALUATE(E) RESULT(Z)
+! input: E - environment tensor
+! output: Z - measurement value of E, by tensor trace
+	USE CONST
+	TYPE(TENSOR), INTENT(IN) :: E
+	COMPLEX :: Z
+	! local tensor
+	TYPE(TENSOR) :: E0
+	
+	! trace out the legs of E
+	!  ╭───╮
+	!  │   3
+	! ╭┼ 1 E 2 ╮
+	! ││   4   │
+	! │╰───╯   │
+	! ╰────────╯
+	E0 = TEN_TRACE(E,[1,3],[2,4])
+	! check that E0 is a number
+	IF (SIZE(E0%DIMS) /= 0) THEN
+		WRITE (*,'(A)') 'EVALUATE::xleg: not evaluated to a number.'
+		STOP
+	END IF
+	! prepare output
+	IF (SIZE(E0%VALS) == 0) THEN ! if E0 empty
+		Z = Z0 ! return zero
+	ELSE ! if not empty
+		Z = E0%VALS(1) ! return the value
+	END IF
+END FUNCTION EVALUATE
+! cal binomial
+FUNCTION BINOMIAL(L, K) RESULT(N)
+! N = L!/(L-K)!K!
+	INTEGER, INTENT(IN) :: L, K
+	INTEGER :: N
+	! local variable
+	INTEGER :: I, M
+	
+	! check validity
+	IF (L < K) THEN ! if L < K, ill defined
+		N = 0 ! set N = 0 and return
+		RETURN
+	END IF
+	! now L >= K
+	N = 1 ! initialize
+	M = MIN(K, L-K) ! see which is smaller 
+	DO I = 1, M ! run over M
+		N = N*(L-I+1)/I ! cal binomial product
+	END DO
+END FUNCTION BINOMIAL
 ! ----------- Debug ------------
 ! show status after DMRG step
 SUBROUTINE SHOW_DMRG_STATUS(MODE,L,TVAL,SVALS)
@@ -651,19 +849,10 @@ CONTAINS
 ! ------------ Tests -------------
 ! test routine
 SUBROUTINE TEST()
-	INTEGER :: I,J
-	CHARACTER, PARAMETER :: BACK(21) = [(CHAR(8),I=1,21)], BLANK(21) = [(' ',I=1, 21)]
+	TYPE(TENSOR) :: T
+	LOGICAL :: Q
 	
-	WRITE (*,'(A)',ADVANCE='NO') 'Arnoldi iteration:'
-	DO I = 1, 5
-		WRITE (*,'(I3)',ADVANCE='NO') I
-		CALL SLEEP(1)
-		WRITE (*,'(3A1)',ADVANCE='NO') BACK(1:3)
-	END DO
-	WRITE (*,'(21A1)',ADVANCE='NO') BACK
-	WRITE (*,'(21A1)',ADVANCE='NO') BLANK
-	WRITE (*,'(21A1)',ADVANCE='NO') BACK
-	WRITE (*,'(A)') 'ABC'
+	CALL SET_MPO(T)
 END SUBROUTINE TEST
 ! test MPO
 SUBROUTINE TEST_MPO()
@@ -691,6 +880,22 @@ SUBROUTINE TEST_DMRG()
 !	C = CORR2(A, PAULI_MAT([3]), PAULI_MAT([3]))
 !	CALL EXPORT('C',C)
 END SUBROUTINE TEST_DMRG
+! test MEASURE
+SUBROUTINE TEST_MEASURE()
+	USE MODEL
+	TYPE(TENSOR) :: T, A(LEN), B(LEN), M, O(2)
+	INTEGER :: I
+	
+	CALL SET_MPO(T)
+	WRITE (*,'(A,I3,A,F5.2,A,F5.2,A)') 'cut = ', MAX_CUT, ', theta = ', THETA/PI, '*pi, beta = ', BETA
+	CALL DMRG(T, A, B)
+	DO I = 1,2
+		O(I) = PAULI_MAT([3])
+	END DO
+	M = MEASURE(A,O)
+	CALL TEN_SAVE('M',M)
+END SUBROUTINE TEST_MEASURE
+
 ! end of module TASK
 END MODULE TASK
 ! ############### PROGRAM ##################
@@ -702,4 +907,5 @@ PROGRAM MAIN
 !	CALL TEST()
 !	CALL TEST_MPO()
 	CALL TEST_DMRG()
+!	CALL TEST_MEASURE()
 END PROGRAM MAIN
