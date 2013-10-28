@@ -71,7 +71,7 @@ SUBROUTINE DMRG(T, A, B)
 	TYPE(TENSOR) :: TA, TB, FA(LEN), FB(LEN), S
 	! local variables
 	INTEGER :: L, ITER
-	COMPLEX :: TVAL
+	COMPLEX :: H, HA(LEN), HB(LEN)
 	! parameters
 	INTEGER, PARAMETER :: SWEEPS = 1
 	
@@ -81,64 +81,70 @@ SUBROUTINE DMRG(T, A, B)
 		STOP
 	END IF
 	! set left- and right- MPO
-	TB = T ! assuming right convention
+	TB = T ! assuming type-B
 	TA = TEN_TRANS(T,[2,1,3,4]) ! left given by 1 <-> 2
 	! iDMRG (warm up)
 	DO L = 1, LEN/2
-		CALL IDMRG(L, TA, TB, FA, FB, A, B, S, TVAL)
-		CALL SHOW_DMRG_STATUS('I',L,TVAL,S%VALS)
+		CALL IDMRG(L, TA, TB, FA, FB, HA, HB, A, B, S, H)
+		CALL SHOW_DMRG_STATUS('I',L,H,S%VALS)
 	END DO
 	! fDMRG (first sweep)
 	DO L = LEN/2+1, LEN
-		CALL FDMRG(L, TA, TB, FA, FB, A, B, S, TVAL)
-		CALL SHOW_DMRG_STATUS('F',L,TVAL,S%VALS)
+		CALL FDMRG(L, TA, TB, FA, FB, HA, HB, A, B, S, H)
+		CALL SHOW_DMRG_STATUS('F',L,H,S%VALS)
 	END DO
 	! fDMRG sweeps
 	DO ITER = 1, SWEEPS
 		! fFDMRG (backward sweep)
 		DO L = 1, LEN
-			CALL FDMRG(L, TB, TA, FB, FA, B, A, S, TVAL)
-			CALL SHOW_DMRG_STATUS('B',L,TVAL,S%VALS)
+			CALL FDMRG(L, TB, TA, FB, FA, HB, HA, B, A, S, H)
+			CALL SHOW_DMRG_STATUS('B',L,H,S%VALS)
 		END DO
 		! fFDMRG (forward sweep)
 		DO L = 1, LEN
-			CALL FDMRG(L, TA, TB, FA, FB, A, B, S, TVAL)
-			CALL SHOW_DMRG_STATUS('F',L,TVAL,S%VALS)
+			CALL FDMRG(L, TA, TB, FA, FB, HA, HB, A, B, S, H)
+			CALL SHOW_DMRG_STATUS('F',L,H,S%VALS)
 		END DO
 	END DO
 END SUBROUTINE DMRG
 ! infinite-size DMRG step
-SUBROUTINE IDMRG(L, TA, TB, FA, FB, A, B, S, TVAL)
+SUBROUTINE IDMRG(L, TA, TB, FA, FB, HA, HB, A, B, S, H)
 ! perform one step of iDMRG at L
 ! input: L - lattice position, TA,TB - MPO
+!        FA, FB - block MPO, HA, HB - level of block MPO
+!        A, B - MPS, S - Schmidt spectrum 
+!        H - complex energy
 ! inout: FA, FB, A, B, S0, S will be updated
 	USE MODEL
 	INTEGER, INTENT(IN)      :: L
 	TYPE(TENSOR), INTENT(IN) :: TA, TB
 	TYPE(TENSOR), INTENT(INOUT) :: FA(:), FB(:), A(:), B(:), S
-	COMPLEX, INTENT(INOUT) :: TVAL
+	COMPLEX, INTENT(INOUT) :: H, HA(:), HB(:)
 	! local tensors
 	TYPE(TENSOR) :: W, TS
 	TYPE(TENSOR), SAVE :: S0
 	! local variables
 	INTEGER :: DPHY
+	COMPLEX :: TVAL
 	
 	IF (L == 1) THEN
 		! initialize tensors
-		! set initial block MPO
-		FA(1) = TA
-		FB(1) = TB
-		! set initial MPS (boundary)
 		DPHY = TB%DIMS(3) ! get physical dim
+		! set initial entanglement mat
+		S0 = EYE_TEN([1,1])
+		S = EYE_TEN([DPHY,DPHY],SQRT(Z1/DPHY))
+		! set initial MPS (boundary)
 		!   2
 		! 1 A 3
 		! initial MPS transfers d.o.f. from leg 2 to 3, with leg 1 dummy
 		A(1) = TEN_PROD(TENSOR([1],[0],[Z1]),EYE_TEN([DPHY,DPHY]))
 		B(1) = A(1) ! B is the same as A
-		! set initial entanglement mat
-		S0 = EYE_TEN([1,1])
-		S = EYE_TEN([DPHY,DPHY],SQRT(Z1/DPHY))
-		TVAL = Z1 ! return initial Tval
+		H = Z0 ! set an initial H
+		! set initial block MPO (and rescale)
+		FA(1) = TA
+		FB(1) = TB
+		CALL RESCALE(FA(1), Z0, HA(1))
+		CALL RESCALE(FB(1), Z0, HB(1))
 	ELSE ! L >= 2
 		! estimate trial W
 		S0%VALS = Z1/S0%VALS ! cal S0^(-1) -> S0
@@ -146,61 +152,72 @@ SUBROUTINE IDMRG(L, TA, TB, FA, FB, A, B, S, TVAL)
 		S0 = S ! S0 is used, update to S
 		TS = MAKE_TS(TA, TB, FA(L-1), FB(L-1)) ! construct TS
 		TVAL = ANNEAL(TS, W) ! anneal W by TS
+		H = HA(L-1)+HB(L-1)+LOG(TVAL) ! calculate H
 		! SVD split W, and update A, B, S
 		CALL SVD(W,[1,2],[3,4],A(L),B(L),S,MAX_CUT,MAX_ERR)
-		! update FA, FB
+		! update FA, FB and rescale
 		FA(L) = NEW_TX(TA, A(L), FA(L-1))
 		FB(L) = NEW_TX(TB, B(L), FB(L-1))
+		CALL RESCALE(FA(L), HA(L-1), HA(L))
+		CALL RESCALE(FB(L), HB(L-1), HB(L))
 	END IF
 END SUBROUTINE IDMRG
 ! finite-size DMRG step (forward convention)
-SUBROUTINE FDMRG(L, TA, TB, FA, FB, A, B, S, TVAL)
+SUBROUTINE FDMRG(L, TA, TB, FA, FB, HA, HB, A, B, S, H)
 ! perform one step of fDMRG at L (forward dirction)
-! input: L - lattice position, TA, TB - MPO
+! input: L - lattice position, TA,TB - MPO
+!        FA, FB - block MPO, LA, LB - level of block MPO
+!        A, B - MPS, S - Schmidt spectrum 
+!        H - complex energy
 ! inout: FA, A, S will be updated
 ! on output: FB is not touched, but B is updated
 	USE MODEL
 	INTEGER, INTENT(IN)      :: L
 	TYPE(TENSOR), INTENT(IN) :: TA, TB
 	TYPE(TENSOR), INTENT(INOUT) :: FA(:), FB(:), A(:), B(:), S
-	COMPLEX, INTENT(INOUT) :: TVAL
+	COMPLEX, INTENT(INOUT) :: H, HA(:), HB(:)
 	! local tensors
 	TYPE(TENSOR) :: W, TS
-	COMPLEX, SAVE :: TVAL0
+	COMPLEX :: TVAL
+	COMPLEX, SAVE :: H0
 	
 	IF (L == 1) THEN
 		! A(1), no update, obtained from the last sweep
 		! update FA, to restart
 		! SSB treatment to be implemented here
 		FA(1) = NEW_TX(TA, A(1))
-		TVAL = TVAL0 ! retrieve Tval from last save
+		CALL RESCALE(FA(1), Z0, HA(1)) ! rescale
+		H = H0 ! retrieve H from last save
 	ELSEIF (L == LEN-1) THEN
 		! estimate trial W
 		W = MAKE_W3(S, B(2), B(1))
 		TS = MAKE_TS(TA, TB, FA(LEN-2)) ! construct TS (boundary)
 		TVAL = ANNEAL(TS, W) ! anneal W by TS
-		TVAL0 = TVAL ! save Tval at the last site
+		H = HA(LEN-2)+LOG(TVAL) ! calculate H
+		H0 = H ! save H at the last site
 		! SVD split W, update A, S
 		CALL SVD(W,[1,2],[3,4],A(LEN-1),B(1),S,MAX_CUT,MAX_ERR)
-		! update FA
+		! update FA and rescale
 		FA(LEN-1) = NEW_TX(TA, A(LEN-1), FA(LEN-2))
+		CALL RESCALE(FA(LEN-1), HA(LEN-2), HA(LEN-1))
 	ELSEIF (L == LEN) THEN
 		! update the ending A by S*B
 		A(LEN) = TEN_TRANS(TEN_PROD(S,B(1),[2],[3]),[1,3,2])
-		! update FA
+		! update FA and rescale
 		FA(LEN) = NEW_TX(TA, A(LEN), FA(LEN-1))
-		! cal Tval by TB (for the whole system)
-		TS = TEN_TRACE(FA(LEN),[1,3],[2,4])
-		TVAL = TS%VALS(1)
+		CALL RESCALE(FA(LEN), HA(LEN-1), HA(LEN))
+		H = HA(LEN) ! return H for the whole lattice
 	ELSE ! 2 <= L <= LEN-2
 		! estimate trial W
 		W = MAKE_W3(S, B(LEN-L+1), B(LEN-L))
 		TS = MAKE_TS(TA, TB, FA(L-1), FB(LEN-L-1)) ! construct TS
 		TVAL = ANNEAL(TS, W) ! anneal W by TS
+		H = HA(L-1)+HB(LEN-L-1)+LOG(TVAL) ! calculate H
 		! SVD split W, update A, S
 		CALL SVD(W,[1,2],[3,4],A(L),B(LEN-L),S,MAX_CUT,MAX_ERR)
-		! update FA
+		! update FA and rescale
 		FA(L) = NEW_TX(TA, A(L), FA(L-1))
+		CALL RESCALE(FA(L), HA(L-1), HA(L))
 	END IF
 END SUBROUTINE FDMRG
 ! estimate iDMG trial state
@@ -298,6 +315,26 @@ FUNCTION NEW_TX(T, X, TX) RESULT (TX1)
 		TX1 = TEN_FLATTEN(TEN_PROD(TEN_PROD(T,TEN_CONJG(X),[3],[2]),X,[3],[2]), [1,0,2,3,5,0,4,0,6])
 	END IF
 END FUNCTION NEW_TX
+! rescale TX
+SUBROUTINE RESCALE(TX, HX0, HX)
+! input: TX - unscaled block MPO, HX0 - last level
+! output: TX - scaled block MPO, HX - this scaling level
+	USE CONST
+	TYPE(TENSOR), INTENT(INOUT) :: TX
+	COMPLEX, INTENT(IN)  :: HX0
+	COMPLEX, INTENT(OUT) :: HX
+	! local variables
+	COMPLEX :: Z
+	
+	! get the scale of TX by evaluation
+	Z = EVALUATE(TX)
+	IF (ABS(Z) /= 0.) THEN
+		! rescale by a factor of Z
+		TX%VALS = TX%VALS/Z
+		! use it to calculate new level
+		HX = HX0 + LOG(Z)
+	END IF
+END SUBROUTINE RESCALE
 ! ----------- Solvers ------------
 ! anneal the state W to the ground state of TS
 FUNCTION ANNEAL(TS, W) RESULT (TVAL)
@@ -797,17 +834,16 @@ FUNCTION BINOMIAL(L, K) RESULT(N)
 END FUNCTION BINOMIAL
 ! ----------- Debug ------------
 ! show status after DMRG step
-SUBROUTINE SHOW_DMRG_STATUS(MODE,L,TVAL,SVALS)
+SUBROUTINE SHOW_DMRG_STATUS(MODE,L,H,SVALS)
 	USE MODEL
 	CHARACTER, INTENT(IN) :: MODE
 	INTEGER, INTENT(IN) :: L
-	COMPLEX, INTENT(IN) :: TVAL
+	COMPLEX, INTENT(IN) :: H
 	COMPLEX, INTENT(IN) :: SVALS(:)
 	! local variables
 	REAL, ALLOCATABLE :: S(:)
 	INTEGER :: I1, I2, NS
 	CHARACTER(2) :: JN
-	COMPLEX :: LGT
 	
 	SELECT CASE (MODE)
 		CASE ('I')
@@ -831,11 +867,10 @@ SUBROUTINE SHOW_DMRG_STATUS(MODE,L,TVAL,SVALS)
 		S = REALPART(SVALS)
 	END IF
 	NS = SIZE(SVALS)
-	LGT = LOG(TVAL)
 	IF (NS <= 6) THEN
-		WRITE (*,'(I3,A,I3,A,F10.6,A,F6.3,A,6F6.3)') I1,JN,I2,': (', REALPART(LGT),',', IMAGPART(LGT), ') S:', S
+		WRITE (*,'(I3,A,I3,A,F10.6,A,F6.3,A,6F6.3)') I1,JN,I2,': (', REALPART(H),',', IMAGPART(H), ') S:', S
 	ELSE
-		WRITE (*,'(I3,A,I3,A,F10.6,A,F6.3,A,4F6.3,A,F6.3)') I1,JN,I2,': (', REALPART(LGT),',', IMAGPART(LGT), ') S:', S(1:4), '  ... ', S(NS)
+		WRITE (*,'(I3,A,I3,A,F10.6,A,F6.3,A,4F6.3,A,F6.3)') I1,JN,I2,': (', REALPART(H),',', IMAGPART(H), ') S:', S(1:4), '  ... ', S(NS)
 	END IF
 END SUBROUTINE SHOW_DMRG_STATUS
 ! end of module PHYSICS
