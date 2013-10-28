@@ -8,17 +8,16 @@ END MODULE CONST
 ! ############### MODEL ###################
 MODULE MODEL
 	USE CONST
-!	REAL    :: BETA = 0.440687
-	REAL    :: BETA = 0.43
-	REAL    :: THETA = 0.*PI
-	INTEGER :: LEN = 10 ! must be even and larger than 4
-	INTEGER :: MAX_CUT = 8
+	REAL    :: BETA = 0.   ! inverse temperature
+	REAL    :: THETA = 1.*PI ! theta-term
+	REAL    :: CROSS = 0.    ! crossing: 1. = allow, 0. = avoid
+	INTEGER :: LEN = 60 ! must be even and larger than 4
+	INTEGER :: MAX_CUT = 12
 	REAL    :: MAX_ERR = 0.
 END MODULE MODEL
 ! ############## PHYSICS ###################
 MODULE PHYSICS
 	USE TENSORIAL
-CONTAINS
 ! tensor conventions
 ! MPO (by default B-type):
 !   A-type       B-type
@@ -32,6 +31,7 @@ CONTAINS
 !     │            │
 !     2            2
 ! ─ 1 A 3 ─    ─ 3 B 1 ─
+CONTAINS
 ! ------------ set MPO tensor ---------------
 ! square lattice MPO
 SUBROUTINE SET_MPO(T)
@@ -46,7 +46,7 @@ SUBROUTINE SET_MPO(T)
 ! ++++++++ set the vertex tensor here ++++++++
 	Q = THETA * ZI
 	B = BETA * Z1
-	X =  TENSOR([2,2,2,2],[0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15],[EXP(2*B),EXP(Q/4.),EXP(Q/4.),EXP(Z0),EXP(Q/4.),EXP(-2*B - Q/2.),EXP(Z0),EXP(-Q/4.),EXP(Q/4.),EXP(Z0),EXP(-2*B + Q/2.),EXP(-Q/4.),EXP(Z0),EXP(-Q/4.),EXP(-Q/4.),EXP(2*B)])
+	X =  TENSOR([2,2,2,2],[0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15],[EXP(2*B),EXP(Q/4.),EXP(Q/4.),EXP(Z0),EXP(Q/4.),CROSS*EXP(-2*B - Q/2.),EXP(Z0),EXP(-Q/4.),EXP(Q/4.),EXP(Z0),CROSS*EXP(-2*B + Q/2.),EXP(-Q/4.),EXP(Z0),EXP(-Q/4.),EXP(-Q/4.),EXP(2*B)])
 ! ++++++++++++++++++++++++++++++++++++++++++++
 	! symm SVD of X to unitary U and diagonal S
 	CALL SYSVD(X,[1,4],[3,2],U,S)
@@ -73,7 +73,7 @@ SUBROUTINE DMRG(T, A, B)
 	INTEGER :: L, ITER
 	COMPLEX :: H, HA(LEN), HB(LEN)
 	! parameters
-	INTEGER, PARAMETER :: SWEEPS = 1
+	INTEGER, PARAMETER :: SWEEPS = 2
 	
 	! check validity of system size LEN
 	IF (MODULO(LEN,2) == 1 .OR. LEN <= 4) THEN
@@ -884,10 +884,16 @@ CONTAINS
 ! ------------ Tests -------------
 ! test routine
 SUBROUTINE TEST()
-	TYPE(TENSOR) :: T
-	LOGICAL :: Q
-	
-	CALL SET_MPO(T)
+	TYPE(TENSOR) :: TA, TB, FA, FB, TS
+
+CALL TEN_LOAD('TA',TA)
+CALL TEN_LOAD('TB',TB)
+CALL TEN_LOAD('FA',FA)
+CALL TEN_LOAD('FB',FB)
+WRITE (*,'(4I3)') FA%DIMS
+WRITE (*,'(4I3)') FB%DIMS
+		TS = TEN_PROD(TEN_PROD(FA,TA,[1],[2]),TEN_PROD(FB,TB,[1],[2]),[1,4],[1,4])
+PRINT *, SIZE(TS%VALS)
 END SUBROUTINE TEST
 ! test MPO
 SUBROUTINE TEST_MPO()
@@ -907,7 +913,7 @@ SUBROUTINE TEST_DMRG()
 	REAL :: T0, T1
 	
 	CALL SET_MPO(T)
-	WRITE (*,'(A,I3,A,F5.2,A,F5.2,A)') 'cut = ', MAX_CUT, ', theta = ', THETA/PI, '*pi, beta = ', BETA
+	WRITE (*,'(A,I3,A,F5.2,A,F5.2,A,F5.2)') 'cut = ', MAX_CUT, ', theta = ', THETA/PI, '*pi, beta = ', BETA, ', crossing = ', CROSS
 	CALL CPU_TIME(T0)
 	CALL DMRG(T, A, B)
 	CALL CPU_TIME(T1)
@@ -922,7 +928,7 @@ SUBROUTINE TEST_MEASURE()
 	INTEGER :: I
 	
 	CALL SET_MPO(T)
-	WRITE (*,'(A,I3,A,F5.2,A,F5.2,A)') 'cut = ', MAX_CUT, ', theta = ', THETA/PI, '*pi, beta = ', BETA
+	WRITE (*,'(A,I3,A,F5.2,A,F5.2,A,F5.2)') 'cut = ', MAX_CUT, ', theta = ', THETA/PI, '*pi, beta = ', BETA, ', crossing = ', CROSS
 	CALL DMRG(T, A, B)
 	DO I = 1,2
 		O(I) = PAULI_MAT([3])
@@ -941,6 +947,6 @@ PROGRAM MAIN
 		
 !	CALL TEST()
 !	CALL TEST_MPO()
-	CALL TEST_DMRG()
-!	CALL TEST_MEASURE()
+!	CALL TEST_DMRG()
+	CALL TEST_MEASURE()
 END PROGRAM MAIN
