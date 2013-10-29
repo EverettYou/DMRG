@@ -26,6 +26,18 @@ MODULE TENSORIAL
 	! recent SVD record
 	INTEGER :: SVD_CUT = 0  ! SVD cut dimension
 	REAL    :: SVD_ERR = 0. ! SVD truncation error
+	INTERFACE TEN_PRINT
+		MODULE PROCEDURE TEN_PRINT_0
+		MODULE PROCEDURE TEN_PRINT_1
+	END INTERFACE
+	INTERFACE TEN_SAVE
+		MODULE PROCEDURE TEN_SAVE_0
+		MODULE PROCEDURE TEN_SAVE_1
+	END INTERFACE
+	INTERFACE TEN_LOAD
+		MODULE PROCEDURE TEN_LOAD_0
+		MODULE PROCEDURE TEN_LOAD_1
+	END INTERFACE
 CONTAINS
 ! Tensor Construction ----------------------
 ! return zero tensor of dimension DIMS
@@ -1352,7 +1364,7 @@ FUNCTION INV_SQRT(A) RESULT(B)
 END FUNCTION INV_SQRT
 ! I/O System -------------------------------
 ! tensor print
-SUBROUTINE TEN_PRINT(TEN)
+SUBROUTINE TEN_PRINT_0(TEN)
 	TYPE(TENSOR), INTENT(IN) :: TEN ! input tensor to print out
 	! local variable
 	INTEGER :: L, NDIM, IDIM, IND
@@ -1385,20 +1397,32 @@ SUBROUTINE TEN_PRINT(TEN)
 			WRITE(*,'(") -> "2F7.3)') TEN%VALS(L) ! end by printing the value
 		END DO
 	END IF
-END SUBROUTINE TEN_PRINT
+END SUBROUTINE TEN_PRINT_0
+! tensor print (array)
+SUBROUTINE TEN_PRINT_1(TENS)
+	TYPE(TENSOR), INTENT(IN) :: TENS(:) ! input tensor array
+	INTEGER :: NTEN, ITEN
+	
+	NTEN = SIZE(TENS) ! get size of array
+	DO ITEN = 1, NTEN ! print each tensor in the array
+		CALL TEN_PRINT_0(TENS(ITEN))
+	END DO
+END SUBROUTINE TEN_PRINT_1
 ! save tensor to disk
-SUBROUTINE TEN_SAVE(FILENAME, TEN)
+SUBROUTINE TEN_SAVE_0(FILENAME, TEN)
 ! save TEN to the file named FILENAME
 ! can be loaded by Mathematica by TensorLoad
 	CHARACTER(*), INTENT(IN) :: FILENAME
 	TYPE(TENSOR), INTENT(IN) :: TEN
-	INTEGER :: NDIM, NREC
+	INTEGER :: NTEN, NDIM, NREC
 	
 	PRINT *, '>>', FILENAME, '.ten'
     OPEN (UNIT = 99, FILE = FILENAME//'.ten', &
         STATUS = 'REPLACE', ACCESS = 'STREAM')
+    NTEN = 1 ! get num of tensors
     NDIM = SIZE(TEN%DIMS) ! get num of legs
     NREC = SIZE(TEN%INDS) ! get num of recs
+    WRITE(99) NTEN ! put NTEN
     WRITE(99) NDIM ! put NDIM
     WRITE(99) NREC ! put NREC
     ! dump data from TEN
@@ -1406,18 +1430,23 @@ SUBROUTINE TEN_SAVE(FILENAME, TEN)
     WRITE(99) TEN%INDS
     WRITE(99) TEN%VALS
     CLOSE(99) ! close stream
-END SUBROUTINE TEN_SAVE
+END SUBROUTINE TEN_SAVE_0
 ! load tensor from disk
-SUBROUTINE TEN_LOAD(FILENAME, TEN)
+SUBROUTINE TEN_LOAD_0(FILENAME, TEN)
 ! save TEN to the file named FILENAME
 ! can be loaded by Mathematica by TensorLoad
 	CHARACTER(*), INTENT(IN) :: FILENAME
 	TYPE(TENSOR), INTENT(OUT) :: TEN
-	INTEGER :: NDIM, NREC, I
+	INTEGER :: NTEN, NDIM, NREC
 	
 	PRINT *, '<<', FILENAME, '.ten'
     OPEN (UNIT = 99, FILE = FILENAME//'.ten', &
         STATUS = 'UNKNOWN', ACCESS = 'STREAM')
+    READ(99) NTEN ! get num of tensors
+    IF (NTEN /= 1) THEN ! check consistency (to prevent reading old tensor file)
+    	WRITE (*,'(A)') 'TEN_LOAD::nten: expect only one tensor in the data file.'
+    	STOP 
+    END IF
     READ(99) NDIM, NREC ! get num of legs and recs
     ! declare TEN by allocation
 	ALLOCATE(TEN%DIMS(NDIM), TEN%INDS(NREC), TEN%VALS(NREC))
@@ -1426,7 +1455,56 @@ SUBROUTINE TEN_LOAD(FILENAME, TEN)
     READ(99) TEN%INDS
     READ(99) TEN%VALS
     CLOSE(99) ! close stream
-END SUBROUTINE TEN_LOAD
+END SUBROUTINE TEN_LOAD_0
+! save tensor to disk (array)
+SUBROUTINE TEN_SAVE_1(FILENAME, TENS)
+! save TEN to the file named FILENAME
+! can be loaded by Mathematica by TensorLoad
+	CHARACTER(*), INTENT(IN) :: FILENAME
+	TYPE(TENSOR), INTENT(IN) :: TENS(:)
+	INTEGER :: NTEN, ITEN, NDIM, NREC
+	
+	PRINT *, '>>', FILENAME, '.ten'
+    OPEN (UNIT = 99, FILE = FILENAME//'.ten', &
+        STATUS = 'REPLACE', ACCESS = 'STREAM')
+    NTEN = SIZE(TENS) ! get num of tens
+    WRITE(99) NTEN ! put NTEN
+    DO ITEN = 1, NTEN ! for each tensor in the array
+		NDIM = SIZE(TENS(ITEN)%DIMS) ! get num of legs
+		NREC = SIZE(TENS(ITEN)%INDS) ! get num of recs
+		WRITE(99) NDIM ! put NDIM
+		WRITE(99) NREC ! put NREC
+		! dump data from TEN
+		WRITE(99) TENS(ITEN)%DIMS
+		WRITE(99) TENS(ITEN)%INDS
+		WRITE(99) TENS(ITEN)%VALS
+	END DO
+    CLOSE(99) ! close stream
+END SUBROUTINE TEN_SAVE_1
+! load tensor from disk (array)
+SUBROUTINE TEN_LOAD_1(FILENAME, TENS)
+! save TEN to the file named FILENAME
+! can be loaded by Mathematica by TensorLoad
+	CHARACTER(*), INTENT(IN) :: FILENAME
+	TYPE(TENSOR), ALLOCATABLE, INTENT(OUT) :: TENS(:)
+	INTEGER :: NTEN, ITEN, NDIM, NREC
+	
+	PRINT *, '<<', FILENAME, '.ten'
+    OPEN (UNIT = 99, FILE = FILENAME//'.ten', &
+        STATUS = 'UNKNOWN', ACCESS = 'STREAM')
+    READ(99) NTEN ! get num of tens
+    ALLOCATE(TENS(NTEN)) ! allocate tensor array
+    DO ITEN = 1, NTEN ! for each tensor
+		READ(99) NDIM, NREC ! get num of legs and recs
+		! declare TEN by allocation
+		ALLOCATE(TENS(ITEN)%DIMS(NDIM), TENS(ITEN)%INDS(NREC), TENS(ITEN)%VALS(NREC))
+		! load data into TEN
+		READ(99) TENS(ITEN)%DIMS
+		READ(99) TENS(ITEN)%INDS
+		READ(99) TENS(ITEN)%VALS
+    END DO
+    CLOSE(99) ! close stream
+END SUBROUTINE TEN_LOAD_1
 ! Accessibility check ----------------------
 SUBROUTINE TEN_CHECK(CALLER, TEN)
 	CHARACTER(*), INTENT(IN) :: CALLER

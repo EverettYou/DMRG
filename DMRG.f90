@@ -11,8 +11,8 @@ MODULE MODEL
 	REAL    :: BETA = 0.   ! inverse temperature
 	REAL    :: THETA = 1.*PI ! theta-term
 	REAL    :: CROSS = 0.    ! crossing: 1. = allow, 0. = avoid
-	INTEGER :: MAX_LEN = 60 ! 60
-	INTEGER :: MAX_CUT = 6 ! 12
+	INTEGER :: LEN = 100 
+	INTEGER :: MAX_CUT = 10 ! 12
 	REAL    :: MAX_ERR = 0.
 END MODULE MODEL
 ! ############## PHYSICS ###################
@@ -65,63 +65,62 @@ SUBROUTINE DMRG(WA, WB)
 ! input: T - MPO site tensor
 ! output: WA, WB - MPS tensor
 	USE MODEL
-	TYPE(TENSOR), INTENT(OUT) :: WA(MAX_LEN), WB(MAX_LEN)
+	TYPE(TENSOR), INTENT(OUT) :: WA(LEN), WB(LEN)
 	! local tensor
-	TYPE(TENSOR) :: TA, TB, DA(MAX_LEN), DB(MAX_LEN), P
+	TYPE(TENSOR) :: TA, TB, DA(LEN), DB(LEN), P
 	! local variables
-	INTEGER :: LEN, L, ITER
-	COMPLEX :: F, FA(MAX_LEN), FB(MAX_LEN)
+	INTEGER :: L, ITER
+	COMPLEX :: F, FA(LEN), FB(LEN)
 	! parameters
-	INTEGER, PARAMETER :: SWEEPS = 1
+	INTEGER, PARAMETER :: SWEEPS = 2
 	
 	! check validity of system size LEN
-	IF (MODULO(MAX_LEN,2) == 1 .OR. MAX_LEN <= 4) THEN
-		WRITE (*,'(A)') 'DMRG::xlen: MAX_LEN must be even and greater than 4.'
+	IF (MODULO(LEN,2) == 1 .OR. LEN <= 4) THEN
+		WRITE (*,'(A)') 'DMRG::xlen: LEN must be even and greater than 4.'
 		STOP
 	END IF
 	! set left- and right- MPO
 	CALL SET_MPO(TA, TB)
-	LEN = MAX_LEN
 	! iDMRG (warm up)
 	DO L = 1, LEN/2
-		CALL IDMRG(LEN, L, TA, TB, DA, DB, FA, FB, WA, WB, P, F)
-		CALL SHOW_DMRG_STATUS('I',LEN,L,F,P)
+		CALL IDMRG(L, TA, TB, DA, DB, FA, FB, WA, WB, P, F)
+		CALL SHOW_DMRG_STATUS('I',L,F,P)
 	END DO
 	! fDMRG (first sweep)
 	DO L = LEN/2+1, LEN
-		CALL FDMRG(LEN, L, TA, TB, DA, DB, FA, FB, WA, WB, P, F)
-		CALL SHOW_DMRG_STATUS('F',LEN,L,F,P)
+		CALL FDMRG(L, TA, TB, DA, DB, FA, FB, WA, WB, P, F)
+		CALL SHOW_DMRG_STATUS('F',L,F,P)
 	END DO
 	! fDMRG sweeps
 	DO ITER = 1, SWEEPS
 		! fFDMRG (backward sweep)
 		DO L = 1, LEN
-			CALL FDMRG(LEN, L, TB, TA, DB, DA, FB, FA, WB, WA, P, F)
-			CALL SHOW_DMRG_STATUS('B',LEN,L,F,P)
+			CALL FDMRG(L, TB, TA, DB, DA, FB, FA, WB, WA, P, F)
+			CALL SHOW_DMRG_STATUS('B',L,F,P)
 		END DO
 		! fFDMRG (forward sweep)
 		DO L = 1, LEN
-			CALL FDMRG(LEN, L, TA, TB, DA, DB, FA, FB, WA, WB, P, F)
-			CALL SHOW_DMRG_STATUS('F',LEN,L,F,P)
+			CALL FDMRG(L, TA, TB, DA, DB, FA, FB, WA, WB, P, F)
+			CALL SHOW_DMRG_STATUS('F',L,F,P)
 		END DO
 	END DO
 	! fDMRG (last sweep)
-	DO L = 1, LEN/2
-		CALL FDMRG(LEN, L, TB, TA, DB, DA, FB, FA, WB, WA, P, F)
-		CALL SHOW_DMRG_STATUS('B',LEN,L,F,P)
-	END DO
+!	DO L = 1, LEN/2
+!		CALL FDMRG(L, TB, TA, DB, DA, FB, FA, WB, WA, P, F)
+!		CALL SHOW_DMRG_STATUS('B',L,F,P)
+!	END DO
 END SUBROUTINE DMRG
 ! infinite-size DMRG step
-SUBROUTINE IDMRG(LEN, L, TA, TB, DA, DB, FA, FB, WA, WB, P, F)
+SUBROUTINE IDMRG(L, TA, TB, DA, DB, FA, FB, WA, WB, P, F)
 ! perform one step of iDMRG at L
-! input: LEN - lattice size, L - lattice position
+! input: L - lattice position
 !        TA,TB - MPO
 !        DA, DB - block MPO, FA, FB - level of block MPO
 !        WA, WB - MPS, P - Schmidt spectrum 
 !        F - free energy
 ! inout: DA, DB, WA, WB, S0, S will be updated
 	USE MODEL
-	INTEGER, INTENT(IN)      :: LEN, L
+	INTEGER, INTENT(IN)      :: L
 	TYPE(TENSOR), INTENT(IN) :: TA, TB
 	TYPE(TENSOR), INTENT(INOUT) :: DA(:), DB(:), WA(:), WB(:), P
 	COMPLEX, INTENT(INOUT) :: F, FA(:), FB(:)
@@ -168,9 +167,9 @@ SUBROUTINE IDMRG(LEN, L, TA, TB, DA, DB, FA, FB, WA, WB, P, F)
 	END IF
 END SUBROUTINE IDMRG
 ! finite-size DMRG step (forward convention)
-SUBROUTINE FDMRG(LEN, L, TA, TB, DA, DB, FA, FB, WA, WB, P, F)
+SUBROUTINE FDMRG(L, TA, TB, DA, DB, FA, FB, WA, WB, P, F)
 ! perform one step of fDMRG at L (forward dirction)
-! input: LEN - lattice size, L - lattice position
+! input: L - lattice position
 !        TA,TB - MPO
 !        DA, DB - block MPO, LA, LB - level of block MPO
 !        WA, WB - MPS, P - Schmidt spectrum 
@@ -178,7 +177,7 @@ SUBROUTINE FDMRG(LEN, L, TA, TB, DA, DB, FA, FB, WA, WB, P, F)
 ! inout: DA, WA, S will be updated
 ! on output: DB is not touched, but WB is updated
 	USE MODEL
-	INTEGER, INTENT(IN)      :: LEN, L
+	INTEGER, INTENT(IN)      :: L
 	TYPE(TENSOR), INTENT(IN) :: TA, TB
 	TYPE(TENSOR), INTENT(INOUT) :: DA(:), DB(:), WA(:), WB(:), P
 	COMPLEX, INTENT(INOUT) :: F, FA(:), FB(:)
@@ -859,10 +858,10 @@ FUNCTION BINOMIAL(L, K) RESULT(N)
 END FUNCTION BINOMIAL
 ! ----------- Debug ------------
 ! show status after DMRG step
-SUBROUTINE SHOW_DMRG_STATUS(MODE,LEN,L,F,P)
+SUBROUTINE SHOW_DMRG_STATUS(MODE,L,F,P)
 	USE MODEL
 	CHARACTER, INTENT(IN) :: MODE
-	INTEGER, INTENT(IN) :: LEN, L
+	INTEGER, INTENT(IN) :: L
 	COMPLEX, INTENT(IN) :: F
 	TYPE(TENSOR), INTENT(IN) :: P
 	! local variables
@@ -904,22 +903,23 @@ CONTAINS
 ! ------------ Tests -------------
 ! test routine
 SUBROUTINE TEST()
-	TYPE(TENSOR) :: TA, TB, DA, DB, TS
+	TYPE(TENSOR) :: O(3)
+	TYPE(TENSOR), ALLOCATABLE :: O1(:)
+	INTEGER :: I
 
-CALL TEN_LOAD('TA',TA)
-CALL TEN_LOAD('TB',TB)
-CALL TEN_LOAD('DA',DA)
-CALL TEN_LOAD('DB',DB)
-WRITE (*,'(4I3)') DA%DIMS
-WRITE (*,'(4I3)') DB%DIMS
-		TS = TEN_PROD(TEN_PROD(DA,TA,[1],[2]),TEN_PROD(DB,TB,[1],[2]),[1,4],[1,4])
-PRINT *, SIZE(TS%VALS)
+	DO I = 1, 3
+		O(I) = PAULI_MAT([I])
+	END DO
+	CALL TEN_SAVE('O',O)
+	CALL TEN_LOAD('O',O1)
+	PRINT *, SIZE(O1)
+	CALL TEN_PRINT(O1)
 END SUBROUTINE TEST
 ! test DMRG
 SUBROUTINE TEST_DMRG()
 	USE MATHIO
 	USE MODEL
-	TYPE(TENSOR) :: WA(MAX_LEN), WB(MAX_LEN)
+	TYPE(TENSOR) :: WA(LEN), WB(LEN)
 	REAL :: T0, T1
 	
 	WRITE (*,'(A,I3,A,F5.2,A,F5.2,A,F5.2)') 'cut = ', MAX_CUT, ', theta = ', THETA/PI, '*pi, beta = ', BETA, ', crossing = ', CROSS
@@ -931,7 +931,7 @@ END SUBROUTINE TEST_DMRG
 ! test MEASURE
 SUBROUTINE TEST_MEASURE()
 	USE MODEL
-	TYPE(TENSOR) :: WA(MAX_LEN), WB(MAX_LEN)
+	TYPE(TENSOR) :: WA(LEN), WB(LEN)
 	TYPE(TENSOR) :: MA, MB, O(2)
 	INTEGER :: I
 	
@@ -954,7 +954,7 @@ PROGRAM MAIN
 	INTEGER :: I
 	PRINT *, '------------ DMRG -------------'
 
-!	CALL TEST()
+	CALL TEST()
 !	CALL TEST_DMRG()
-	CALL TEST_MEASURE()
+!	CALL TEST_MEASURE()
 END PROGRAM MAIN
