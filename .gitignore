@@ -1,4 +1,5 @@
-./build/*
+DMRG
+build/*
 *.nb
 *.dat
 *.ten
