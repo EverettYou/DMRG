@@ -216,6 +216,9 @@ FUNCTION TEN_ADD(TEN1, TEN2) RESULT(TEN0)
 	COMPLEX, ALLOCATABLE :: VALS(:)
 	REAL :: EPS
 	
+	! check input tensor
+	CALL TEN_CHECK('TEN_ADD', TEN1)
+	CALL TEN_CHECK('TEN_ADD', TEN2)
 	! check tensor dimension consistency
 	IF (.NOT.ALL(TEN1%DIMS==TEN2%DIMS)) THEN
 		WRITE (*,'(A)') 'TEN_ADD::xdim: Attempt to add tensors of different dimensions.'
@@ -355,7 +358,9 @@ FUNCTION TEN_TRACE(TEN, LEGS1, LEGS2) RESULT(TEN0)
 	LOGICAL, ALLOCATABLE :: CRASH(:)
 	INTEGER, ALLOCATABLE :: INDS(:), ORD(:) ! temp INDS and its ordering
 	COMPLEX, ALLOCATABLE :: VALS(:) ! temp VALS
-	 
+	
+	! check input tensor
+	CALL TEN_CHECK('TEN_TRACE', TEN)
 	! prepare indices and ordering
 	! get remaining legs by excluding leading legs 1 and 2
 	RLEGS = REMAINING_LEGS(SIZE(TEN%DIMS),[LEGS1,LEGS2])
@@ -404,6 +409,9 @@ FUNCTION TEN_PROD(TEN1, TEN2, LEGS1, LEGS2) RESULT(TEN0)
 	LOGICAL, ALLOCATABLE :: MASK(:) ! mask for non-zeros
 	
 !	PRINT *, 'TEN_PROD'
+	! check input tensor
+	CALL TEN_CHECK('TEN_PROD', TEN1)
+	CALL TEN_CHECK('TEN_PROD', TEN2)
 	! prepare indices and ordering
 	IF (PRESENT(LEGS1) .AND. SIZE(LEGS1)>0) THEN
 		! get the remaining legs
@@ -590,6 +598,8 @@ FUNCTION TEN2MAT(TEN, LLEGS, RLEGS0) RESULT(MAT)
 	INTEGER, ALLOCATABLE :: RLEGS(:), LINDS(:), RINDS(:)
 	INTEGER :: LDIM, RDIM, I
 	
+	! check input tensor
+	CALL TEN_CHECK('TEN2MAT', TEN)
 	IF (PRESENT(RLEGS0)) THEN ! if the remaining leg is specified
 		RLEGS = RLEGS0 ! use the specification
 	ELSE ! if not specified
@@ -1417,5 +1427,19 @@ SUBROUTINE TEN_LOAD(FILENAME, TEN)
     READ(99) TEN%VALS
     CLOSE(99) ! close stream
 END SUBROUTINE TEN_LOAD
+! Accessibility check ----------------------
+SUBROUTINE TEN_CHECK(CALLER, TEN)
+	CHARACTER(*), INTENT(IN) :: CALLER
+	TYPE(TENSOR), INTENT(IN) :: TEN
+	
+	IF (.NOT. (ALLOCATED(TEN%DIMS) .AND. ALLOCATED(TEN%INDS) .AND. ALLOCATED(TEN%VALS))) THEN
+		WRITE (*,'(A)') CALLER//'::xten: input tensor not defined.'
+		STOP
+	END IF
+	IF (SIZE(TEN%INDS) /= SIZE(TEN%VALS)) THEN
+		WRITE (*,'(A)') CALLER//'::xlen: input tensor INDS and VALS have different sizes.'
+		STOP
+	END IF
+END SUBROUTINE TEN_CHECK
 ! end of the module
 END MODULE TENSORIAL
