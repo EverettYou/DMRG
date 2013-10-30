@@ -26,6 +26,18 @@ MODULE TENSORIAL
 	! recent SVD record
 	INTEGER :: SVD_CUT = 0  ! SVD cut dimension
 	REAL    :: SVD_ERR = 0. ! SVD truncation error
+	INTERFACE TEN_PRINT
+		MODULE PROCEDURE TEN_PRINT_0
+		MODULE PROCEDURE TEN_PRINT_1
+	END INTERFACE
+	INTERFACE TEN_SAVE
+		MODULE PROCEDURE TEN_SAVE_0
+		MODULE PROCEDURE TEN_SAVE_1
+	END INTERFACE
+	INTERFACE TEN_LOAD
+		MODULE PROCEDURE TEN_LOAD_0
+		MODULE PROCEDURE TEN_LOAD_1
+	END INTERFACE
 CONTAINS
 ! Tensor Construction ----------------------
 ! return zero tensor of dimension DIMS
@@ -216,6 +228,9 @@ FUNCTION TEN_ADD(TEN1, TEN2) RESULT(TEN0)
 	COMPLEX, ALLOCATABLE :: VALS(:)
 	REAL :: EPS
 	
+	! check input tensor
+	CALL TEN_CHECK('TEN_ADD', TEN1)
+	CALL TEN_CHECK('TEN_ADD', TEN2)
 	! check tensor dimension consistency
 	IF (.NOT.ALL(TEN1%DIMS==TEN2%DIMS)) THEN
 		WRITE (*,'(A)') 'TEN_ADD::xdim: Attempt to add tensors of different dimensions.'
@@ -355,7 +370,9 @@ FUNCTION TEN_TRACE(TEN, LEGS1, LEGS2) RESULT(TEN0)
 	LOGICAL, ALLOCATABLE :: CRASH(:)
 	INTEGER, ALLOCATABLE :: INDS(:), ORD(:) ! temp INDS and its ordering
 	COMPLEX, ALLOCATABLE :: VALS(:) ! temp VALS
-	 
+	
+	! check input tensor
+	CALL TEN_CHECK('TEN_TRACE', TEN)
 	! prepare indices and ordering
 	! get remaining legs by excluding leading legs 1 and 2
 	RLEGS = REMAINING_LEGS(SIZE(TEN%DIMS),[LEGS1,LEGS2])
@@ -394,7 +411,7 @@ FUNCTION TEN_PROD(TEN1, TEN2, LEGS1, LEGS2) RESULT(TEN0)
 	TYPE(TENSOR) :: TEN0 ! resulting tensor
 	! local variable
 	INTEGER :: NREC1, NREC2, IREC1, IREC2, NREC0, IREC0, IREC20
-	INTEGER :: RDIM1, RDIM2, LDIM, PDIM, LIND, I
+	INTEGER :: RDIM1, RDIM2, LDIM, PDIM, LIND, I, INFO
 	INTEGER, ALLOCATABLE :: RLEGS1(:), RLEGS2(:) ! remaining legs
 	INTEGER, ALLOCATABLE :: LINDS1(:), LINDS2(:) ! leading inds
 	INTEGER, ALLOCATABLE :: RINDS1(:), RINDS2(:) ! remaining inds
@@ -404,6 +421,9 @@ FUNCTION TEN_PROD(TEN1, TEN2, LEGS1, LEGS2) RESULT(TEN0)
 	LOGICAL, ALLOCATABLE :: MASK(:) ! mask for non-zeros
 	
 !	PRINT *, 'TEN_PROD'
+	! check input tensor
+	CALL TEN_CHECK('TEN_PROD', TEN1)
+	CALL TEN_CHECK('TEN_PROD', TEN2)
 	! prepare indices and ordering
 	IF (PRESENT(LEGS1) .AND. SIZE(LEGS1)>0) THEN
 		! get the remaining legs
@@ -451,8 +471,12 @@ FUNCTION TEN_PROD(TEN1, TEN2, LEGS1, LEGS2) RESULT(TEN0)
 	IF (1.*NREC1*NREC2 < 1.*RDIM1*RDIM2) THEN ! use REAL to prevent overflow
 		! if record pairs < dense storage, use sparse method
 		PDIM = NREC1*NREC2 ! max possible total dims
-!		PRINT *, 'sparse', NREC1, NREC2, PDIM
-		ALLOCATE(INDS(PDIM),VALS(PDIM)) ! allocate for space by PDIM
+!		PRINT *, 'spa', NREC1, NREC2, PDIM
+		ALLOCATE(INDS(PDIM),VALS(PDIM),STAT=INFO) ! allocate for space by PDIM
+		IF (INFO /= 0) THEN ! if failed to allocate
+			WRITE (*,'(A)') 'TEN_PROD::fail: fail to allocate space for new tensor.'
+			STOP
+		END IF
 		! search for index crash
 		IREC1 = 1
 		IREC2 = 1
@@ -495,10 +519,14 @@ FUNCTION TEN_PROD(TEN1, TEN2, LEGS1, LEGS2) RESULT(TEN0)
 		TEN0%VALS = VALS(:NREC0)
 	ELSE ! if record pairs > dense storage, switch to dense method
 		PDIM = RDIM1*RDIM2 ! dense storage
-!		PRINT *, 'dense', RDIM1, RDIM2, PDIM
+!		PRINT *, 'den', RDIM1, RDIM2, PDIM
 		! initialization
+		ALLOCATE(TEN0%INDS(PDIM),TEN0%VALS(PDIM),STAT=INFO)
+		IF (INFO /= 0) THEN ! if failed to allocate
+			WRITE (*,'(A)') 'TEN_PROD::fail: fail to allocate space for new tensor.'
+			STOP
+		END IF
 		TEN0%INDS = [(I,I=0,PDIM-1)]
-		ALLOCATE(TEN0%VALS(PDIM))
 		TEN0%VALS = (0.,0.)
 		! search for index crash
 		IREC1 = 1
@@ -590,6 +618,8 @@ FUNCTION TEN2MAT(TEN, LLEGS, RLEGS0) RESULT(MAT)
 	INTEGER, ALLOCATABLE :: RLEGS(:), LINDS(:), RINDS(:)
 	INTEGER :: LDIM, RDIM, I
 	
+	! check input tensor
+	CALL TEN_CHECK('TEN2MAT', TEN)
 	IF (PRESENT(RLEGS0)) THEN ! if the remaining leg is specified
 		RLEGS = RLEGS0 ! use the specification
 	ELSE ! if not specified
@@ -1315,7 +1345,6 @@ END FUNCTION NORM
 FUNCTION INV_SQRT(A) RESULT(B)
 ! input: A must be a square matrix
 ! output: INV_SQRT(A) = A^(-1/2)
-	USE MATHIO
 	COMPLEX, INTENT(IN) :: A(:,:)
 	COMPLEX, ALLOCATABLE :: B(:,:)
 	! local variable
@@ -1343,7 +1372,7 @@ FUNCTION INV_SQRT(A) RESULT(B)
 END FUNCTION INV_SQRT
 ! I/O System -------------------------------
 ! tensor print
-SUBROUTINE TEN_PRINT(TEN)
+SUBROUTINE TEN_PRINT_0(TEN)
 	TYPE(TENSOR), INTENT(IN) :: TEN ! input tensor to print out
 	! local variable
 	INTEGER :: L, NDIM, IDIM, IND
@@ -1376,20 +1405,32 @@ SUBROUTINE TEN_PRINT(TEN)
 			WRITE(*,'(") -> "2F7.3)') TEN%VALS(L) ! end by printing the value
 		END DO
 	END IF
-END SUBROUTINE TEN_PRINT
+END SUBROUTINE TEN_PRINT_0
+! tensor print (array)
+SUBROUTINE TEN_PRINT_1(TENS)
+	TYPE(TENSOR), INTENT(IN) :: TENS(:) ! input tensor array
+	INTEGER :: NTEN, ITEN
+	
+	NTEN = SIZE(TENS) ! get size of array
+	DO ITEN = 1, NTEN ! print each tensor in the array
+		CALL TEN_PRINT_0(TENS(ITEN))
+	END DO
+END SUBROUTINE TEN_PRINT_1
 ! save tensor to disk
-SUBROUTINE TEN_SAVE(FILENAME, TEN)
+SUBROUTINE TEN_SAVE_0(FILENAME, TEN)
 ! save TEN to the file named FILENAME
 ! can be loaded by Mathematica by TensorLoad
 	CHARACTER(*), INTENT(IN) :: FILENAME
 	TYPE(TENSOR), INTENT(IN) :: TEN
-	INTEGER :: NDIM, NREC
+	INTEGER :: NTEN, NDIM, NREC
 	
 	PRINT *, '>>', FILENAME, '.ten'
     OPEN (UNIT = 99, FILE = FILENAME//'.ten', &
         STATUS = 'REPLACE', ACCESS = 'STREAM')
+    NTEN = 1 ! get num of tensors
     NDIM = SIZE(TEN%DIMS) ! get num of legs
     NREC = SIZE(TEN%INDS) ! get num of recs
+    WRITE(99) NTEN ! put NTEN
     WRITE(99) NDIM ! put NDIM
     WRITE(99) NREC ! put NREC
     ! dump data from TEN
@@ -1397,18 +1438,23 @@ SUBROUTINE TEN_SAVE(FILENAME, TEN)
     WRITE(99) TEN%INDS
     WRITE(99) TEN%VALS
     CLOSE(99) ! close stream
-END SUBROUTINE TEN_SAVE
+END SUBROUTINE TEN_SAVE_0
 ! load tensor from disk
-SUBROUTINE TEN_LOAD(FILENAME, TEN)
+SUBROUTINE TEN_LOAD_0(FILENAME, TEN)
 ! save TEN to the file named FILENAME
 ! can be loaded by Mathematica by TensorLoad
 	CHARACTER(*), INTENT(IN) :: FILENAME
 	TYPE(TENSOR), INTENT(OUT) :: TEN
-	INTEGER :: NDIM, NREC, I
+	INTEGER :: NTEN, NDIM, NREC
 	
 	PRINT *, '<<', FILENAME, '.ten'
     OPEN (UNIT = 99, FILE = FILENAME//'.ten', &
         STATUS = 'UNKNOWN', ACCESS = 'STREAM')
+    READ(99) NTEN ! get num of tensors
+    IF (NTEN /= 1) THEN ! check consistency (to prevent reading old tensor file)
+    	WRITE (*,'(A)') 'TEN_LOAD::nten: expect only one tensor in the data file.'
+    	STOP 
+    END IF
     READ(99) NDIM, NREC ! get num of legs and recs
     ! declare TEN by allocation
 	ALLOCATE(TEN%DIMS(NDIM), TEN%INDS(NREC), TEN%VALS(NREC))
@@ -1417,6 +1463,69 @@ SUBROUTINE TEN_LOAD(FILENAME, TEN)
     READ(99) TEN%INDS
     READ(99) TEN%VALS
     CLOSE(99) ! close stream
-END SUBROUTINE TEN_LOAD
+END SUBROUTINE TEN_LOAD_0
+! save tensor to disk (array)
+SUBROUTINE TEN_SAVE_1(FILENAME, TENS)
+! save TEN to the file named FILENAME
+! can be loaded by Mathematica by TensorLoad
+	CHARACTER(*), INTENT(IN) :: FILENAME
+	TYPE(TENSOR), INTENT(IN) :: TENS(:)
+	INTEGER :: NTEN, ITEN, NDIM, NREC
+	
+	PRINT *, '>>', FILENAME, '.ten'
+    OPEN (UNIT = 99, FILE = FILENAME//'.ten', &
+        STATUS = 'REPLACE', ACCESS = 'STREAM')
+    NTEN = SIZE(TENS) ! get num of tens
+    WRITE(99) NTEN ! put NTEN
+    DO ITEN = 1, NTEN ! for each tensor in the array
+		NDIM = SIZE(TENS(ITEN)%DIMS) ! get num of legs
+		NREC = SIZE(TENS(ITEN)%INDS) ! get num of recs
+		WRITE(99) NDIM ! put NDIM
+		WRITE(99) NREC ! put NREC
+		! dump data from TEN
+		WRITE(99) TENS(ITEN)%DIMS
+		WRITE(99) TENS(ITEN)%INDS
+		WRITE(99) TENS(ITEN)%VALS
+	END DO
+    CLOSE(99) ! close stream
+END SUBROUTINE TEN_SAVE_1
+! load tensor from disk (array)
+SUBROUTINE TEN_LOAD_1(FILENAME, TENS)
+! save TEN to the file named FILENAME
+! can be loaded by Mathematica by TensorLoad
+	CHARACTER(*), INTENT(IN) :: FILENAME
+	TYPE(TENSOR), ALLOCATABLE, INTENT(OUT) :: TENS(:)
+	INTEGER :: NTEN, ITEN, NDIM, NREC
+	
+	PRINT *, '<<', FILENAME, '.ten'
+    OPEN (UNIT = 99, FILE = FILENAME//'.ten', &
+        STATUS = 'UNKNOWN', ACCESS = 'STREAM')
+    READ(99) NTEN ! get num of tens
+    ALLOCATE(TENS(NTEN)) ! allocate tensor array
+    DO ITEN = 1, NTEN ! for each tensor
+		READ(99) NDIM, NREC ! get num of legs and recs
+		! declare TEN by allocation
+		ALLOCATE(TENS(ITEN)%DIMS(NDIM), TENS(ITEN)%INDS(NREC), TENS(ITEN)%VALS(NREC))
+		! load data into TEN
+		READ(99) TENS(ITEN)%DIMS
+		READ(99) TENS(ITEN)%INDS
+		READ(99) TENS(ITEN)%VALS
+    END DO
+    CLOSE(99) ! close stream
+END SUBROUTINE TEN_LOAD_1
+! Accessibility check ----------------------
+SUBROUTINE TEN_CHECK(CALLER, TEN)
+	CHARACTER(*), INTENT(IN) :: CALLER
+	TYPE(TENSOR), INTENT(IN) :: TEN
+	
+	IF (.NOT. (ALLOCATED(TEN%DIMS) .AND. ALLOCATED(TEN%INDS) .AND. ALLOCATED(TEN%VALS))) THEN
+		WRITE (*,'(A)') CALLER//'::xten: input tensor not defined.'
+		STOP
+	END IF
+	IF (SIZE(TEN%INDS) /= SIZE(TEN%VALS)) THEN
+		WRITE (*,'(A)') CALLER//'::xlen: input tensor INDS and VALS have different sizes.'
+		STOP
+	END IF
+END SUBROUTINE TEN_CHECK
 ! end of the module
 END MODULE TENSORIAL
