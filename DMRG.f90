@@ -12,7 +12,7 @@ MODULE MODEL
 	REAL    :: CROSS = 0.    ! crossing: 1. = allow, 0. = avoid
 	REAL    :: BETA = 0.     ! inverse temperature
 	INTEGER :: LEN = 100 
-	INTEGER :: MAX_CUT = 16 ! 12
+	INTEGER :: MAX_CUT = 16  ! 12
 	REAL    :: MAX_ERR = 0.
 	INTEGER :: SWEEPS = 5
 END MODULE MODEL
@@ -929,11 +929,13 @@ SUBROUTINE COLLECT(BETAS)
 END SUBROUTINE COLLECT
 ! make filename
 FUNCTION FILENAME()
+! file naming system
+! call by COLLECT, will use MODEL parameters
 	USE MODEL
 	CHARACTER(15) :: FILENAME
 	
 	WRITE (FILENAME,'(A,I2,A,I1,A,I1,A,I1,A,I5.4)') 'D',MAX_CUT,'S',SWEEPS,'Q',NINT(THETA/PI),'C',NINT(CROSS),'B',NINT(BETA*10000)
-END FUNCTION
+END FUNCTION FILENAME
 ! ------------ Tests -------------
 ! test routine
 SUBROUTINE TEST()
