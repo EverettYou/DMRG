@@ -8,12 +8,13 @@ END MODULE CONST
 ! ############### MODEL ###################
 MODULE MODEL
 	USE CONST
-	REAL    :: BETA = 0.   ! inverse temperature
 	REAL    :: THETA = 1.*PI ! theta-term
 	REAL    :: CROSS = 0.    ! crossing: 1. = allow, 0. = avoid
+	REAL    :: BETA = 0.     ! inverse temperature
 	INTEGER :: LEN = 100 
-	INTEGER :: MAX_CUT = 10 ! 12
+	INTEGER :: MAX_CUT = 16 ! 12
 	REAL    :: MAX_ERR = 0.
+	INTEGER :: SWEEPS = 5
 END MODULE MODEL
 ! ############## PHYSICS ###################
 MODULE PHYSICS
@@ -71,8 +72,6 @@ SUBROUTINE DMRG(WA, WB)
 	! local variables
 	INTEGER :: L, ITER
 	COMPLEX :: F, FA(LEN), FB(LEN)
-	! parameters
-	INTEGER, PARAMETER :: SWEEPS = 2
 	
 	! check validity of system size LEN
 	IF (MODULO(LEN,2) == 1 .OR. LEN <= 4) THEN
@@ -389,14 +388,14 @@ FUNCTION ANNEAL0(TS, W) RESULT (TVAL)
 	LOGICAL :: EXH
 	
 	! unpack data from tensor
-	! collect leg-combined inds in TS and W
-	LINDS = COLLECT_INDS(TS,[1,3,5,7])
-	RINDS = COLLECT_INDS(TS,[2,4,6,8])
-	WINDS = COLLECT_INDS(W,[1,2,3,4])
+	! collect leg-combined inds in TS and W (remember to +1)
+	LINDS = COLLECT_INDS(TS,[1,3,5,7])+1
+	RINDS = COLLECT_INDS(TS,[2,4,6,8])+1
+	WINDS = COLLECT_INDS(W,[1,2,3,4])+1
 	! cal total dim of W
 	DIM = PRODUCT(W%DIMS)
 	! allocate Krylov space
-	ALLOCATE(V(0:DIM-1,N)) ! note the rank matching 0:DIM-1
+	ALLOCATE(V(DIM,N))
 	V = Z0 ! clear
 	! dump W to the 1st col of V
 	FORALL (I = 1:SIZE(W%INDS))
@@ -527,11 +526,11 @@ FUNCTION ANNEAL1(TS, W) RESULT (TVAL)
 		! call ARPACK
 		! allocate for work space
 		ALLOCATE(D(NCV), Z(N,NEV), RESID(N), V(N,NCV), WORKD(3*N),&
-			WORKL(LWORKL), WORKEV(3*NCV), RWORK(NCV), SEL(NCV))
-		! collect leg-combined inds in TS and W
-		LINDS = COLLECT_INDS(TS,[1,3,5,7])
-		RINDS = COLLECT_INDS(TS,[2,4,6,8])
-		WINDS = COLLECT_INDS(W,[1,2,3,4])
+			WORKL(LWORKL), WORKEV(3*NCV), RWORK(NCV), SEL(NCV), STAT = INFO)
+		! collect leg-combined inds in TS and W (remember to +1)
+		LINDS = COLLECT_INDS(TS,[1,3,5,7])+1
+		RINDS = COLLECT_INDS(TS,[2,4,6,8])+1
+		WINDS = COLLECT_INDS(W,[1,2,3,4])+1
 		! unpack initial vect from W tensor input
 		RESID = Z0 ! clear
 		FORALL (I = 1:SIZE(W%INDS))
@@ -561,8 +560,8 @@ FUNCTION ANNEAL1(TS, W) RESULT (TVAL)
 					WRITE (6,'(I4)',ADVANCE = 'NO') NCALL
 					! perform action of TS to W0 -> W1
 					! point W0, W1 to the correct part of WORKD
-					W0(0:N-1) => WORKD(IPNTR(1):IPNTR(1)+N-1)
-					W1(0:N-1) => WORKD(IPNTR(2):IPNTR(2)+N-1)
+					W0 => WORKD(IPNTR(1):IPNTR(1)+N-1)
+					W1 => WORKD(IPNTR(2):IPNTR(2)+N-1)
 					! carry out sparse matrix multiplication
 					W1 = Z0 ! clear
 					DO I = 1,SIZE(TS%INDS)
@@ -890,7 +889,7 @@ SUBROUTINE SHOW_DMRG_STATUS(MODE,L,F,P)
 	ELSE
 		S = ENTROPY(P)
 	END IF
-	WRITE (*,'(I3,A,I3,A,F10.6,A,F6.3,A,F10.6, A)') I1,JN,I2,': F = (', REALPART(F),',', IMAGPART(F), '), S = ', S/LOG(2.), 'bit'
+	WRITE (*,'(I3,A,I3,A,F10.6,A,F6.3,A,F10.6,A,F5.2,A)') I1,JN,I2,': F = (', REALPART(F),',', IMAGPART(F), '), S = ', S/LOG(2.), 'bit ', SVD_ERR*100,'%'
 END SUBROUTINE SHOW_DMRG_STATUS
 ! end of module PHYSICS
 END MODULE PHYSICS
@@ -900,20 +899,45 @@ MODULE TASK
 CONTAINS
 ! ------------ Data --------------
 ! collect data
+SUBROUTINE COLLECT(BETAS)
+	USE MODEL
+	REAL, INTENT(IN) :: BETAS(:) ! a list of beta to be sampled
+	! local tensors
+	TYPE(TENSOR) :: WA(LEN), WB(LEN)
+	TYPE(TENSOR) :: MA, MB, OS(2)
+	! local variables
+	INTEGER :: I, N
+	
+	! prepare observables to be measured
+	DO I = 1,2
+		OS(I) = PAULI_MAT([3])
+	END DO
+	! prepare beta
+	N = SIZE(BETAS) ! get size of beta list
+	DO I = 1, N ! for each beta in the list
+		BETA = BETAS(I) ! remember to set beta!!!
+		! prepare to launch DMRG
+		WRITE (*,'(A,I3,A,F5.2,A,F5.2,A,F5.2)') 'cut = ', MAX_CUT, ', theta = ', THETA/PI, '*pi, beta = ', BETA, ', crossing = ', CROSS
+		! launch DMRG to find ground state WA, WB
+		CALL DMRG(WA, WB)
+		! take measurements
+		MA = MEASURE(WA, OS)
+		CALL TEN_SAVE('./data center/MA'//FILENAME(),MA)
+		MB = MEASURE(WB, OS)
+		CALL TEN_SAVE('./data center/MB'//FILENAME(),MB)
+	END DO 
+END SUBROUTINE COLLECT
+! make filename
+FUNCTION FILENAME()
+	USE MODEL
+	CHARACTER(15) :: FILENAME
+	
+	WRITE (FILENAME,'(A,I2,A,I1,A,I1,A,I1,A,I5.4)') 'D',MAX_CUT,'S',SWEEPS,'Q',NINT(THETA/PI),'C',NINT(CROSS),'B',NINT(BETA*10000)
+END FUNCTION
 ! ------------ Tests -------------
 ! test routine
 SUBROUTINE TEST()
-	TYPE(TENSOR) :: O(3)
-	TYPE(TENSOR), ALLOCATABLE :: O1(:)
-	INTEGER :: I
-
-	DO I = 1, 3
-		O(I) = PAULI_MAT([I])
-	END DO
-	CALL TEN_SAVE('O',O)
-	CALL TEN_LOAD('O',O1)
-	PRINT *, SIZE(O1)
-	CALL TEN_PRINT(O1)
+	PRINT *, FILENAME()
 END SUBROUTINE TEST
 ! test DMRG
 SUBROUTINE TEST_DMRG()
@@ -932,20 +956,19 @@ END SUBROUTINE TEST_DMRG
 SUBROUTINE TEST_MEASURE()
 	USE MODEL
 	TYPE(TENSOR) :: WA(LEN), WB(LEN)
-	TYPE(TENSOR) :: MA, MB, O(2)
+	TYPE(TENSOR) :: MA, MB, OS(2)
 	INTEGER :: I
 	
 	WRITE (*,'(A,I3,A,F5.2,A,F5.2,A,F5.2)') 'cut = ', MAX_CUT, ', theta = ', THETA/PI, '*pi, beta = ', BETA, ', crossing = ', CROSS
 	CALL DMRG(WA, WB)
 	DO I = 1,2
-		O(I) = PAULI_MAT([3])
+		OS(I) = PAULI_MAT([3])
 	END DO
-	MA = MEASURE(WA, O)
+	MA = MEASURE(WA, OS)
 	CALL TEN_SAVE('MA',MA)
-	MB = MEASURE(WB, O)
+	MB = MEASURE(WB, OS)
 	CALL TEN_SAVE('MB',MB)
 END SUBROUTINE TEST_MEASURE
-
 ! end of module TASK
 END MODULE TASK
 ! ############### PROGRAM ##################
@@ -954,7 +977,8 @@ PROGRAM MAIN
 	INTEGER :: I
 	PRINT *, '------------ DMRG -------------'
 
-	CALL TEST()
+!	CALL TEST()
 !	CALL TEST_DMRG()
 !	CALL TEST_MEASURE()
+	CALL COLLECT([-0.2,0.2,0.5,-0.5,0.4,0.1,-0.1,0.3,-0.3,0.6,-0.4])
 END PROGRAM MAIN

@@ -411,7 +411,7 @@ FUNCTION TEN_PROD(TEN1, TEN2, LEGS1, LEGS2) RESULT(TEN0)
 	TYPE(TENSOR) :: TEN0 ! resulting tensor
 	! local variable
 	INTEGER :: NREC1, NREC2, IREC1, IREC2, NREC0, IREC0, IREC20
-	INTEGER :: RDIM1, RDIM2, LDIM, PDIM, LIND, I
+	INTEGER :: RDIM1, RDIM2, LDIM, PDIM, LIND, I, INFO
 	INTEGER, ALLOCATABLE :: RLEGS1(:), RLEGS2(:) ! remaining legs
 	INTEGER, ALLOCATABLE :: LINDS1(:), LINDS2(:) ! leading inds
 	INTEGER, ALLOCATABLE :: RINDS1(:), RINDS2(:) ! remaining inds
@@ -471,8 +471,12 @@ FUNCTION TEN_PROD(TEN1, TEN2, LEGS1, LEGS2) RESULT(TEN0)
 	IF (1.*NREC1*NREC2 < 1.*RDIM1*RDIM2) THEN ! use REAL to prevent overflow
 		! if record pairs < dense storage, use sparse method
 		PDIM = NREC1*NREC2 ! max possible total dims
-!		PRINT *, 'sparse', NREC1, NREC2, PDIM
-		ALLOCATE(INDS(PDIM),VALS(PDIM)) ! allocate for space by PDIM
+!		PRINT *, 'spa', NREC1, NREC2, PDIM
+		ALLOCATE(INDS(PDIM),VALS(PDIM),STAT=INFO) ! allocate for space by PDIM
+		IF (INFO /= 0) THEN ! if failed to allocate
+			WRITE (*,'(A)') 'TEN_PROD::fail: fail to allocate space for new tensor.'
+			STOP
+		END IF
 		! search for index crash
 		IREC1 = 1
 		IREC2 = 1
@@ -515,10 +519,14 @@ FUNCTION TEN_PROD(TEN1, TEN2, LEGS1, LEGS2) RESULT(TEN0)
 		TEN0%VALS = VALS(:NREC0)
 	ELSE ! if record pairs > dense storage, switch to dense method
 		PDIM = RDIM1*RDIM2 ! dense storage
-!		PRINT *, 'dense', RDIM1, RDIM2, PDIM
+!		PRINT *, 'den', RDIM1, RDIM2, PDIM
 		! initialization
+		ALLOCATE(TEN0%INDS(PDIM),TEN0%VALS(PDIM),STAT=INFO)
+		IF (INFO /= 0) THEN ! if failed to allocate
+			WRITE (*,'(A)') 'TEN_PROD::fail: fail to allocate space for new tensor.'
+			STOP
+		END IF
 		TEN0%INDS = [(I,I=0,PDIM-1)]
-		ALLOCATE(TEN0%VALS(PDIM))
 		TEN0%VALS = (0.,0.)
 		! search for index crash
 		IREC1 = 1
