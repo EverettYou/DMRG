@@ -10,11 +10,11 @@ MODULE MODEL
 	USE CONST
 	REAL    :: THETA = 0.*PI ! theta-term
 	REAL    :: CROSS = 1.    ! crossing: 1. = allow, 0. = avoid
-	REAL    :: BETA = 0.4     ! inverse temperature
-	INTEGER :: LEN = 8 
-	INTEGER :: MAX_CUT = 16  ! 16
+	REAL    :: BETA = 0.     ! inverse temperature
+	INTEGER :: LEN = 100 
+	INTEGER :: MAX_CUT = 12  ! 16
 	REAL    :: MAX_ERR = 0.
-	INTEGER :: SWEEPS = 2
+	INTEGER :: SWEEPS = 1
 END MODULE MODEL
 ! ############## PHYSICS ###################
 MODULE PHYSICS
@@ -1008,6 +1008,6 @@ PROGRAM MAIN
 
 !	CALL TEST()
 !	CALL TEST_DMRG()
-	CALL TEST_MEASURE()
-!	CALL COLLECT([0.43])
+!	CALL TEST_MEASURE()
+	CALL COLLECT([0.4407]) !0.440687
 END PROGRAM MAIN
