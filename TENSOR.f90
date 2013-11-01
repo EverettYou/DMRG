@@ -424,6 +424,36 @@ FUNCTION TEN_PROD(TEN1, TEN2, LEGS1, LEGS2) RESULT(TEN0)
 	! check input tensor
 	CALL TEN_CHECK('TEN_PROD', TEN1)
 	CALL TEN_CHECK('TEN_PROD', TEN2)
+	! check leg-rank and dimension consistency
+	IF (PRESENT(LEGS1)) THEN
+		! given LEGS1, check its legs not exceeding the rank
+		IF (.NOT.(ALL(LEGS1 >= 1) .AND. ALL(LEGS1 <= SIZE(TEN1%DIMS)))) THEN
+			WRITE (*,'(A)') 'TEN_PROD::xleg: leg label lying outside the tensor rank.'
+			STOP
+		END IF
+		IF (PRESENT(LEGS2)) THEN
+			! given LEGS2, check its legs not exceeding the rank
+			IF (.NOT.(ALL(LEGS2 >= 1) .AND. ALL(LEGS2 <= SIZE(TEN2%DIMS)))) THEN
+				WRITE (*,'(A)') 'TEN_PROD::xleg: leg label lying outside the tensor rank.'
+				STOP
+			END IF
+			! given both LEGS1, LEGS2, check dimension match
+			IF (.NOT. ALL(TEN1%DIMS(LEGS1) == TEN2%DIMS(LEGS2))) THEN
+				WRITE (*,'(A)') 'TEN_PROD::xdim: contracting dimensions mismatch.'
+				STOP
+			END IF
+		ELSE ! given LEGS1, missing LEGS2, impossible to contract
+			WRITE (*,'(A)') 'TEN_PROD::xdim: contracting dimensions mismatch.'
+			STOP
+		END IF
+	ELSE
+		IF (PRESENT(LEGS2)) THEN ! given LEGS2, missing LEGS1, impossible to contract
+			WRITE (*,'(A)') 'TEN_PROD::xdim: contracting dimensions mismatch.'
+			STOP
+		END IF
+		! missing both LEGS1, LEGS2 is ok
+		! and the dimensions always match in this case
+	END IF
 	! prepare indices and ordering
 	IF (PRESENT(LEGS1) .AND. SIZE(LEGS1)>0) THEN
 		! get the remaining legs
@@ -575,7 +605,7 @@ FUNCTION REMAINING_LEGS(NLEG, LLEGS) RESULT(RLEGS)
 	
 	! check leg labels
 	IF (.NOT.(ALL(LLEGS >= 1) .AND. ALL(LLEGS <= NLEG))) THEN
-		WRITE (*,'(A)') 'REMAINING_LEGS::xleg: Leg label lying outside the tensor rank.'
+		WRITE (*,'(A)') 'REMAINING_LEGS::xleg: leg label lying outside the tensor rank.'
 		STOP
 	END IF
 	RQ = .TRUE. ! assuming all legs are remaining
