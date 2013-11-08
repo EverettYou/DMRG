@@ -8,10 +8,10 @@ END MODULE CONST
 ! ############### MODEL ###################
 MODULE MODEL
 	USE CONST
-	REAL    :: THETA = 0.*PI ! theta-term
-	REAL    :: CROSS = 1.    ! crossing: 1. = allow, 0. = avoid
-	REAL    :: BETA = 0.     ! inverse temperature
-	INTEGER :: LEN = 100 
+	REAL    :: THETA = 1.*PI ! theta-term
+	REAL    :: CROSS = 0.    ! crossing: 1. = allow, 0. = avoid
+	REAL    :: BETA = 0.    ! inverse temperature
+	INTEGER :: LEN = 16 
 	INTEGER :: MAX_CUT = 12  ! 16
 	REAL    :: MAX_ERR = 0.
 	INTEGER :: SWEEPS = 1
@@ -357,8 +357,8 @@ FUNCTION ANNEAL(TS, W) RESULT (TVAL)
 	COMPLEX :: TVAL
 	
 ! +++++++++ choose a solver here +++++++++++
-!	TVAL = ANNEAL0(TS, W) ! self-made (fas, unstable)
-	TVAL = ANNEAL1(TS, W) ! package (slower, robust)
+	TVAL = ANNEAL0(TS, W) ! self-made (fas, unstable)
+!	TVAL = ANNEAL1(TS, W) ! package (slower, robust)
 ! ++++++++++++++++++++++++++++++++++++++++++
 END FUNCTION ANNEAL
 ! self-made Arnoldi algorithm (fast, unstable)
@@ -993,11 +993,56 @@ SUBROUTINE TEST_MEASURE()
 		OS(I) = PAULI_MAT([3])
 	END DO
 	CALL TEN_SAVE('WA',WA)
-	W = MPS(WA)
-	CALL EXPORT('W',W)
+!	W = MPS(WA)
+!	CALL EXPORT('W',W)
 	MA = MEASURE(WA, OS)
 	CALL TEN_SAVE('MA',MA)
 END SUBROUTINE TEST_MEASURE
+! test transfer matrix
+SUBROUTINE TEST_TRANSF()
+	USE MATHIO
+	INTEGER, PARAMETER :: N = 2, L = 100
+	TYPE(TENSOR) :: T
+	INTEGER :: I, J, D
+	INTEGER, ALLOCATABLE :: LBS(:)
+	COMPLEX, ALLOCATABLE :: M(:,:), S(:,:), A(:,:), B(:,:)
+	COMPLEX :: Z(2,L), A0, F
+	
+	CALL SET_MPO(T)
+	DO I = 1, N
+		!           3
+		!       ╭───┴───╮
+		!       3       3
+		! 1 ─ 1 T 2 ─ 1 T 2 ─ 2
+		!       4       4
+		!       ╰───┬───╯
+		!           4
+		T = TEN_FLATTEN(TEN_PROD(T,T,[2],[1]),[1,0,4,0,2,5,0,3,6])
+	END DO
+	T = TEN_TRACE(T,[1],[2])
+	M = TEN2MAT(T,[1],[2])
+	D = SIZE(M,1)
+	CALL EXPORT('M',M)
+	ALLOCATE(LBS(2**N))
+	LBS = 0
+	LBS(1) = 3
+	LBS(2**N) = 3 
+	S = TEN2MAT(PAULI_MAT(LBS),[1],[2])
+	A = M
+	A0 = SUM([(A(I,I),I=1,D)])
+	A = A/A0
+	F = LOG(A0)/LOG(2.)
+	DO J = 1, L
+		B = MATMUL(S,A)
+		Z(1,J) = SUM([(B(I,I),I=1,D)])
+		Z(2,J) = F
+		A = MATMUL(M,A)
+		A0 = SUM([(A(I,I),I=1,D)])
+		A = A/A0
+		F = F + LOG(A0)/LOG(2.)
+	END DO
+	CALL EXPORT('Z',Z)
+END SUBROUTINE TEST_TRANSF
 ! end of module TASK
 END MODULE TASK
 ! ############### PROGRAM ##################
@@ -1009,5 +1054,6 @@ PROGRAM MAIN
 !	CALL TEST()
 !	CALL TEST_DMRG()
 !	CALL TEST_MEASURE()
-	CALL COLLECT([0.4407]) !0.440687
+	CALL TEST_TRANSF()
+!	CALL COLLECT([0.4406])
 END PROGRAM MAIN
