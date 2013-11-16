@@ -8,11 +8,11 @@ END MODULE CONST
 ! ############### MODEL ###################
 MODULE MODEL
 	USE CONST
-	REAL    :: THETA = 1.*PI ! theta-term
-	REAL    :: CROSS = 0.    ! crossing: 1. = allow, 0. = avoid
-	REAL    :: BETA = 0.    ! inverse temperature
-	INTEGER :: LEN = 16 
-	INTEGER :: MAX_CUT = 12  ! 16
+	REAL    :: THETA = 0.*PI ! theta-term
+	REAL    :: CROSS = 1.    ! crossing: 1. = allow, 0. = avoid
+	REAL    :: BETA = 0.440687    ! inverse temperature 0.440687
+	INTEGER :: LEN = 20 
+	INTEGER :: MAX_CUT = 8  ! 16
 	REAL    :: MAX_ERR = 0.
 	INTEGER :: SWEEPS = 1
 END MODULE MODEL
@@ -1052,8 +1052,8 @@ PROGRAM MAIN
 	PRINT *, '------------ DMRG -------------'
 
 !	CALL TEST()
-!	CALL TEST_DMRG()
+	CALL TEST_DMRG()
 !	CALL TEST_MEASURE()
-	CALL TEST_TRANSF()
+!	CALL TEST_TRANSF()
 !	CALL COLLECT([0.4406])
 END PROGRAM MAIN
