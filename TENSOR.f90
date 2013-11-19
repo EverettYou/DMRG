@@ -1,11 +1,11 @@
 ! ###########################################
 ! TENSORIAL module
 ! defines a derived type TENSOR to represent sparse tensor.
-! the type TENSOR has three components:
+! The type TENSOR has three components:
 ! DIMS - dimensions, integer array (/DIM1, DIM2, .../)
 ! INDS - indices, integer array (/IND1, IND2, .../)
 ! VALS - values, complex array (/VAL1, VAL2, .../)
-! a tensor T with its K th non-zero elements at T(I1, I2, I3, ...)
+! A tensor T with its K th non-zero elements at T(I1, I2, I3, ...)
 ! will be stored as
 ! INDS(K) = (I1-1) + (I2-1)*DIM1 + (I3-1)*DIM1*DIM2 + ...
 ! VALS(K) = T(I1, I2, I3, ...)
@@ -27,16 +27,16 @@ MODULE TENSORIAL
 	REAL    :: SVD_ERR = 0. ! SVD truncation error
 	REAL, PARAMETER, PRIVATE :: TOL = 1.E-5 	! global tolerance level
 	INTERFACE TEN_PRINT
-		MODULE PROCEDURE TEN_PRINT_0 ! for single tensor
-		MODULE PROCEDURE TEN_PRINT_1 ! for tensor array
+		MODULE PROCEDURE TEN_PRINT_0
+		MODULE PROCEDURE TEN_PRINT_1
 	END INTERFACE
 	INTERFACE TEN_SAVE
-		MODULE PROCEDURE TEN_SAVE_0 ! for single tensor
-		MODULE PROCEDURE TEN_SAVE_1 ! for tensor array
+		MODULE PROCEDURE TEN_SAVE_0
+		MODULE PROCEDURE TEN_SAVE_1
 	END INTERFACE
 	INTERFACE TEN_LOAD
-		MODULE PROCEDURE TEN_LOAD_0 ! for single tensor
-		MODULE PROCEDURE TEN_LOAD_1 ! for tensor array
+		MODULE PROCEDURE TEN_LOAD_0
+		MODULE PROCEDURE TEN_LOAD_1
 	END INTERFACE
 CONTAINS
 ! Tensor Construction ----------------------
@@ -58,7 +58,7 @@ FUNCTION DIAG_MAT(DIAG) RESULT(MAT)
 	
 	N = SIZE(DIAG) ! get dimension
 	MAT%DIMS = [N,N] ! set dimension
-	LB = TOL * SCALE(DIAG) ! set truncation
+	LB = TOL * NORM(DIAG) ! set truncation
 	! elements in DIAG with abs below LB will be considered as zero
 	! get locs of non-zero elements in DIAG
 	M = 0
@@ -154,22 +154,6 @@ FUNCTION EYE_TEN(DIMS, VAL) RESULT (TEN)
 	END IF
 END FUNCTION EYE_TEN
 ! Representation ---------------------------
-! for dim-0 tensor, get the scalar value
-FUNCTION ZVAL(TEN)
-! only used to take the value for scalar tensor
-! for representation of general tensor, use TEN_REPRESENT
-	TYPE(TENSOR), INTENT(IN) :: TEN
-	COMPLEX :: ZVAL
-	
-	ZVAL = (0.,0.)
-	IF (SIZE(TEN%DIMS) == 0) THEN ! check if TEN is a scalar
-		IF (SIZE(TEN%VALS) == 1) THEN ! if val is non-empty
-			ZVAL = TEN%VALS(1) ! record it
-		END IF
-	ELSE
-		WRITE(*,'(A)')'SVAL::nscl: input tensor is not a scalar (dim-0 tensor).'
-	END IF
-END FUNCTION ZVAL
 ! represent sparse tensor TEN by dense tensor TAR
 SUBROUTINE TEN_REPRESENT(TAR, TEN)
 ! * caller must make sure TEN%DIMS consistent with the shape of TAR
@@ -259,7 +243,7 @@ FUNCTION TEN_ADD(TEN1, TEN2) RESULT(TEN0)
 	NREC2 = SIZE(TEN2%INDS)
 	NREC0 = NREC1 + NREC2 
 	! set eps, val < eps will be treated as 0
-	EPS = MAX(SCALE(TEN1%VALS),SCALE(TEN2%VALS))*TOL
+	EPS = MAX(NORM(TEN1%VALS),NORM(TEN2%VALS))*TOL
 	! prepare temp storage for resulting INDS and VALS
 	ALLOCATE(INDS(NREC0),VALS(NREC0))
 	! start merge iteration
@@ -354,7 +338,7 @@ FUNCTION TEN_COMBINE(TENS, COEFS) RESULT(TEN)
 	! get num of tensors
 	NTEN = SIZE(TENS)
 	! set eps, coef below eps will be treated as 0
-	EPS = SCALE(COEFS)*TOL
+	EPS = NORM(COEFS)*TOL
 	! num of non-zero tensors
 	NT = 0
 	! multiply coefs to tens
@@ -514,12 +498,12 @@ FUNCTION TEN_PROD(TEN1, TEN2, LEGS1, LEGS2) RESULT(TEN0)
 	! in this case there will be totally NREC1*NREC2 crashes
 	! however dense storage requires RDIM1*RDIM2 space
 	! if NREC1*NREC2 is worse than RDIM1*RDIM2, switch to the dense method
-	IF (1.*NREC1*NREC2 < 1.*RDIM1*RDIM2) THEN ! use REAL to prevent integer overflow
+	IF (1.*NREC1*NREC2 < 1.*RDIM1*RDIM2) THEN ! use REAL to prevent overflow
 		! if record pairs < dense storage, use sparse method
 		PDIM = NREC1*NREC2 ! max possible total dims
 !		PRINT *, 'spa', NREC1, NREC2, PDIM
 		ALLOCATE(INDS(PDIM),VALS(PDIM),STAT=INFO) ! allocate for space by PDIM
-		IF (1.*NREC1*NREC2 >= 1.*HUGE(0) .OR. INFO /= 0) THEN ! if failed to allocate
+		IF (INFO /= 0) THEN ! if failed to allocate
 			WRITE (*,'(A)') 'TEN_PROD::fail: fail to allocate space for new tensor.'
 			STOP
 		END IF
@@ -568,7 +552,7 @@ FUNCTION TEN_PROD(TEN1, TEN2, LEGS1, LEGS2) RESULT(TEN0)
 !		PRINT *, 'den', RDIM1, RDIM2, PDIM
 		! initialization
 		ALLOCATE(TEN0%INDS(PDIM),TEN0%VALS(PDIM),STAT=INFO)
-		IF (1.*RDIM1*RDIM2 >= 1.*HUGE(0) .OR. INFO /= 0) THEN ! if failed to allocate
+		IF (INFO /= 0) THEN ! if failed to allocate
 			WRITE (*,'(A)') 'TEN_PROD::fail: fail to allocate space for new tensor.'
 			STOP
 		END IF
@@ -643,7 +627,7 @@ SUBROUTINE TEN_CHOP(TEN, EPS0)
 	IF (PRESENT(EPS0)) THEN ! if the chopping level provided
 		EPS = EPS0 ! use it
 	ELSE ! if not, set appropriate chopping level
-		EPS = SCALE(TEN%VALS)*TOL
+		EPS = NORM(TEN%VALS)*TOL
 	END IF
 	! get the mask for non-zero elements
 	MASK = ABS(TEN%VALS)>EPS
@@ -1023,7 +1007,6 @@ SUBROUTINE HOSVD(TEN, US, LEGS0, DCUTS)
 	! estimate size of work space, note that RD >= LD
 	LWORK = MAX(2*LD+RD,MIN(LD*(LD+65),2*LD+32*SUM(TEN%DIMS)))
 	LRWORK = 5*LD
-	SVD_ERR = 0. ! clear error record
 	! allocate for work space
 	ALLOCATE(S(LD), U(LD,LD), VT(LD,RD), WORK(LWORK), RWORK(LRWORK))
 	DO ILEG = 1, NLEG ! loop over all 
@@ -1039,11 +1022,8 @@ SUBROUTINE HOSVD(TEN, US, LEGS0, DCUTS)
 		! now transformation matrix is stored in U(:M,:L)
 		! organize U matrix into a tensor and record
 		US(ILEG) = MAT2TEN(U(:M,:L),[M,L],[1])
-		! record relative error
-		SVD_ERR = SVD_ERR + (1.-SUM(S(:L))/SUM(S(:MIN(M,N))))
 	END DO
 	DEALLOCATE(A, S, U, VT, WORK, RWORK) ! make room for TEN construction
-	SVD_ERR = SVD_ERR/NLEG ! cal average relative error
 	! now U for all legs are obtained in US in the form of 2-tensor
 	! perform Tucker product to get the core tensor
 	! A_{i} * {U^*_ij} = S_{j}
@@ -1226,7 +1206,7 @@ SUBROUTINE MERGE_DUPLICATES(INDS, VALS, NREC)
 	! get ordering of INDS by merge sort
 	ORD = ORDERING(INDS)
 	! set eps, val < eps will be treated as 0
-	EPS = SCALE(VALS)*TOL
+	EPS = NORM(VALS)*TOL
 	! for duplicated ind add associated vals together
 	IREC1 = 1
 	IREC0 = 0
@@ -1370,10 +1350,10 @@ FUNCTION ORDERING(F) RESULT(X)
 	! copy data to X
 	X = B	
 END FUNCTION ORDERING
-! estimate the scale of dim-1 complex array
-FUNCTION SCALE(ZS) RESULT(X)
+! estimate the norm of dim-1 complex array
+FUNCTION NORM(ZS) RESULT(X)
 	COMPLEX, INTENT(IN) :: ZS(:) ! array input
-	REAL :: X ! scale output
+	REAL :: X ! norm output
 	! local variables
 	INTEGER, PARAMETER :: MAX_SIZE = 100
 	INTEGER :: NZ
@@ -1381,18 +1361,16 @@ FUNCTION SCALE(ZS) RESULT(X)
 	
 	NZ = SIZE(ZS)
 	IF (NZ < MAX_SIZE) THEN
-		X = MAXVAL(ABS(ZS))
-!		X = SUM(ABS(ZS))/NZ
+		X = SQRT(SUM(ABS(ZS)**2)/NZ)
 	ELSE
 		ALLOCATE(H(MAX_SIZE)) ! allocate space of rand reals
 		! H is of the size MAX_SIZE
 		CALL RANDOM_NUMBER(H) ! 0 <= H < 1
 		! to map H in [0,1) to {1..NZ}, scaled by (NZ-1) and shift by 1 
-		X = MAXVAL(ABS(ZS(1+FLOOR(H*(NZ-1)))))
-!		X = SUM(ABS(ZS(1+FLOOR(H*(NZ-1)))))/MAX_SIZE
+		X = SQRT(SUM(ABS(ZS(1+FLOOR(H*(NZ-1))))**2)/MAX_SIZE)
 		DEALLOCATE(H) ! free H
 	END IF
-END FUNCTION SCALE
+END FUNCTION NORM
 ! matrix inverse square root by Schur decomposition
 FUNCTION INV_SQRT(A) RESULT(B)
 ! input: A must be a square matrix
