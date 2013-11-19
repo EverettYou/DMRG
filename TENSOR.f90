@@ -22,10 +22,10 @@ MODULE TENSORIAL
 		INTEGER, ALLOCATABLE :: INDS(:) ! indices
 		COMPLEX, ALLOCATABLE :: VALS(:) ! values
 	END TYPE TENSOR
+	REAL, PARAMETER :: TOL = 1.E-5 	! global tolerance level
 	! recent SVD record
 	INTEGER :: SVD_CUT = 0  ! SVD cut dimension
 	REAL    :: SVD_ERR = 0. ! SVD truncation error
-	REAL, PARAMETER, PRIVATE :: TOL = 1.E-5 	! global tolerance level
 	INTERFACE TEN_PRINT
 		MODULE PROCEDURE TEN_PRINT_0
 		MODULE PROCEDURE TEN_PRINT_1

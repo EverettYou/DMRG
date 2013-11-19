@@ -1,10 +1,15 @@
 <<<<<<< HEAD
+<<<<<<< HEAD
 GFORTRAN module version '6' created from TENSOR.f90 on Mon Nov 18 23:10:51 2013
 MD5:c3b7c0db3eeef389495dba4765fb8625 -- If you edit this, you'll get what you deserve.
 =======
 GFORTRAN module version '6' created from TENSOR.f90 on Thu Oct 31 16:09:13 2013
 MD5:f0d31ff0d1b64e56e1d79e0ea5fe79d1 -- If you edit this, you'll get what you deserve.
 >>>>>>> parent of 1e75352... Use HUGE_TENSOR and DATAPOOL
+=======
+GFORTRAN module version '6' created from TENSOR.f90 on Mon Nov 18 16:10:14 2013
+MD5:66381d9ec6f07754c79d38af9fbbd1f0 -- If you edit this, you'll get what you deserve.
+>>>>>>> parent of 47a260a... try made multi-mode solver failed
 
 (() () () () () () () () () () () () () () () () () () () () () () () ()
 () () ())
@@ -154,17 +159,26 @@ UNKNOWN UNKNOWN 0 0 ALLOCATABLE DIMENSION) UNKNOWN-ACCESS ())) PUBLIC (
 190 'tensorial' 'tensorial' 'tensorial' 1 ((MODULE UNKNOWN-INTENT
 UNKNOWN-PROC UNKNOWN UNKNOWN 0 0) (UNKNOWN 0 0 0 UNKNOWN ()) 0 0 () () 0
 () () () 0 0)
-191 'zero_ten' 'tensorial' 'zero_ten' 1 ((PROCEDURE UNKNOWN-INTENT
+191 'tol' 'tensorial' 'tol' 1 ((PARAMETER UNKNOWN-INTENT UNKNOWN-PROC
+UNKNOWN IMPLICIT-SAVE 0 0) (REAL 8 0 0 REAL ()) 0 0 () (CONSTANT (REAL 8
+0 0 REAL ()) 0 '0.a7c5ac471b4788@-4') () 0 () () () 0 0)
+192 'zero_ten' 'tensorial' 'zero_ten' 1 ((PROCEDURE UNKNOWN-INTENT
 MODULE-PROC DECL UNKNOWN 0 0 FUNCTION IMPLICIT_PURE ALWAYS_EXPLICIT) (
+<<<<<<< HEAD
 <<<<<<< HEAD
 DERIVED 14 0 0 DERIVED ()) 192 0 (193) () 194 () () () 0 0)
 195 'zval' 'tensorial' 'zval' 1 ((PROCEDURE UNKNOWN-INTENT MODULE-PROC
 DECL UNKNOWN 0 0 FUNCTION) (COMPLEX 8 0 0 COMPLEX ()) 196 0 (197) () 195
+=======
+DERIVED 14 0 0 DERIVED ()) 193 0 (194) () 195 () () () 0 0)
+196 'zval' 'tensorial' 'zval' 1 ((PROCEDURE UNKNOWN-INTENT MODULE-PROC
+DECL UNKNOWN 0 0 FUNCTION) (COMPLEX 8 0 0 COMPLEX ()) 197 0 (198) () 196
+>>>>>>> parent of 47a260a... try made multi-mode solver failed
 () () () 0 0)
-193 'dims' '' 'dims' 192 ((VARIABLE IN UNKNOWN-PROC UNKNOWN UNKNOWN 0 0
+194 'dims' '' 'dims' 193 ((VARIABLE IN UNKNOWN-PROC UNKNOWN UNKNOWN 0 0
 DIMENSION DUMMY) (INTEGER 4 0 0 INTEGER ()) 0 0 () (1 0 ASSUMED_SHAPE (
 CONSTANT (INTEGER 4 0 0 INTEGER ()) 0 '1') ()) 0 () () () 0 0)
-194 'ten' '' 'ten' 192 ((VARIABLE UNKNOWN-INTENT UNKNOWN-PROC UNKNOWN
+195 'ten' '' 'ten' 193 ((VARIABLE UNKNOWN-INTENT UNKNOWN-PROC UNKNOWN
 UNKNOWN 0 0 RESULT ALWAYS_EXPLICIT) (DERIVED 14 0 0 DERIVED ()) 0 0 () ()
 0 () () () 0 0)
 16 'diag' '' 'diag' 15 ((VARIABLE IN UNKNOWN-PROC UNKNOWN UNKNOWN 0 0
@@ -188,17 +202,27 @@ CONSTANT (INTEGER 4 0 0 INTEGER ()) 0 '1') ()) 0 () () () 0 0)
 21 'val' '' 'val' 19 ((VARIABLE UNKNOWN-INTENT UNKNOWN-PROC UNKNOWN
 UNKNOWN 0 0 OPTIONAL DUMMY) (COMPLEX 8 0 0 COMPLEX ()) 0 0 () () 0 () ()
 () 0 0)
+<<<<<<< HEAD
 =======
 DERIVED 14 0 0 DERIVED ()) 193 0 (194) () 195 () () () 0 0)
 164 'tar' '' 'tar' 163 ((VARIABLE INOUT UNKNOWN-PROC UNKNOWN UNKNOWN 0 0
 DIMENSION DUMMY) (COMPLEX 8 0 0 COMPLEX ()) 0 0 () (1 0 EXPLICIT (
 CONSTANT (INTEGER 4 0 0 INTEGER ()) 0 '0') (OP (INTEGER 4 0 0 INTEGER ())
 0 MINUS (FUNCTION (INTEGER 4 0 0 INTEGER ()) 0 196 (('' (VARIABLE (
+=======
+198 'ten' '' 'ten' 197 ((VARIABLE IN UNKNOWN-PROC UNKNOWN UNKNOWN 0 0
+DUMMY) (DERIVED 14 0 0 DERIVED ()) 0 0 () () 0 () () () 0 0)
+164 'tar' '' 'tar' 163 ((VARIABLE INOUT UNKNOWN-PROC UNKNOWN UNKNOWN 0 0
+DIMENSION DUMMY) (COMPLEX 8 0 0 COMPLEX ()) 0 0 () (1 0 EXPLICIT (
+CONSTANT (INTEGER 4 0 0 INTEGER ()) 0 '0') (OP (INTEGER 4 0 0 INTEGER ())
+0 MINUS (FUNCTION (INTEGER 4 0 0 INTEGER ()) 0 199 (('' (VARIABLE (
+>>>>>>> parent of 47a260a... try made multi-mode solver failed
 INTEGER 4 0 0 INTEGER ()) 1 165 ((COMPONENT 14 187 'dims') (ARRAY (FULL
 0))))) ('' ()) ('' ())) '_gfortran_product_i4' 0 'product') (CONSTANT (
 INTEGER 4 0 0 INTEGER ()) 0 '1'))) 0 () () () 0 0)
 165 'ten' '' 'ten' 163 ((VARIABLE IN UNKNOWN-PROC UNKNOWN UNKNOWN 0 0
 DUMMY) (DERIVED 14 0 0 DERIVED ()) 0 0 () () 0 () () () 0 0)
+<<<<<<< HEAD
 196 'product' '(intrinsic)' 'product' 163 ((PROCEDURE UNKNOWN-INTENT
 UNKNOWN-PROC UNKNOWN UNKNOWN 0 0 FUNCTION) (UNKNOWN 0 0 0 UNKNOWN ()) 0
 0 () () 196 () () () 0 0)
@@ -206,11 +230,18 @@ UNKNOWN-PROC UNKNOWN UNKNOWN 0 0 FUNCTION) (UNKNOWN 0 0 0 UNKNOWN ()) 0
 DIMENSION DUMMY) (COMPLEX 8 0 0 COMPLEX ()) 0 0 () (1 0 EXPLICIT (
 CONSTANT (INTEGER 4 0 0 INTEGER ()) 0 '0') (OP (INTEGER 4 0 0 INTEGER ())
 0 MINUS (FUNCTION (INTEGER 4 0 0 INTEGER ()) 0 197 (('' (VARIABLE (
+=======
+106 'tar' '' 'tar' 105 ((VARIABLE IN UNKNOWN-PROC UNKNOWN UNKNOWN 0 0
+DIMENSION DUMMY) (COMPLEX 8 0 0 COMPLEX ()) 0 0 () (1 0 EXPLICIT (
+CONSTANT (INTEGER 4 0 0 INTEGER ()) 0 '0') (OP (INTEGER 4 0 0 INTEGER ())
+0 MINUS (FUNCTION (INTEGER 4 0 0 INTEGER ()) 0 200 (('' (VARIABLE (
+>>>>>>> parent of 47a260a... try made multi-mode solver failed
 INTEGER 4 0 0 INTEGER ()) 1 107 ((COMPONENT 14 187 'dims') (ARRAY (FULL
 0))))) ('' ()) ('' ())) '_gfortran_product_i4' 0 'product') (CONSTANT (
 INTEGER 4 0 0 INTEGER ()) 0 '1'))) 0 () () () 0 0)
 107 'ten' '' 'ten' 105 ((VARIABLE INOUT UNKNOWN-PROC UNKNOWN UNKNOWN 0 0
 DUMMY) (DERIVED 14 0 0 DERIVED ()) 0 0 () () 0 () () () 0 0)
+<<<<<<< HEAD
 197 'product' '(intrinsic)' 'product' 105 ((PROCEDURE UNKNOWN-INTENT
 UNKNOWN-PROC UNKNOWN UNKNOWN 0 0 FUNCTION) (UNKNOWN 0 0 0 UNKNOWN ()) 0
 0 () () 197 () () () 0 0)
@@ -218,6 +249,15 @@ UNKNOWN-PROC UNKNOWN UNKNOWN 0 0 FUNCTION) (UNKNOWN 0 0 0 UNKNOWN ()) 0
 DIMENSION DUMMY) (COMPLEX 8 0 0 COMPLEX ()) 0 0 () (1 0 EXPLICIT (
 CONSTANT (INTEGER 4 0 0 INTEGER ()) 0 '0') (OP (INTEGER 4 0 0 INTEGER ())
 0 MINUS (FUNCTION (INTEGER 4 0 0 INTEGER ()) 0 198 (('' (VARIABLE (
+=======
+200 'product' '(intrinsic)' 'product' 105 ((PROCEDURE UNKNOWN-INTENT
+UNKNOWN-PROC UNKNOWN UNKNOWN 0 0 FUNCTION) (UNKNOWN 0 0 0 UNKNOWN ()) 0
+0 () () 200 () () () 0 0)
+137 'tar' '' 'tar' 136 ((VARIABLE IN UNKNOWN-PROC UNKNOWN UNKNOWN 0 0
+DIMENSION DUMMY) (COMPLEX 8 0 0 COMPLEX ()) 0 0 () (1 0 EXPLICIT (
+CONSTANT (INTEGER 4 0 0 INTEGER ()) 0 '0') (OP (INTEGER 4 0 0 INTEGER ())
+0 MINUS (FUNCTION (INTEGER 4 0 0 INTEGER ()) 0 201 (('' (VARIABLE (
+>>>>>>> parent of 47a260a... try made multi-mode solver failed
 INTEGER 4 0 0 INTEGER ()) 1 138 ((COMPONENT 14 187 'dims') (ARRAY (FULL
 0))))) ('' ()) ('' ())) '_gfortran_product_i4' 0 'product') (CONSTANT (
 INTEGER 4 0 0 INTEGER ()) 0 '1'))) 0 () () () 0 0)
@@ -225,6 +265,7 @@ INTEGER 4 0 0 INTEGER ()) 0 '1'))) 0 () () () 0 0)
 DUMMY) (DERIVED 14 0 0 DERIVED ()) 0 0 () () 0 () () () 0 0)
 139 'val' '' 'val' 136 ((VARIABLE UNKNOWN-INTENT UNKNOWN-PROC UNKNOWN
 UNKNOWN 0 0 RESULT) (COMPLEX 8 0 0 COMPLEX ()) 0 0 () () 0 () () () 0 0)
+<<<<<<< HEAD
 198 'product' '(intrinsic)' 'product' 136 ((PROCEDURE UNKNOWN-INTENT
 UNKNOWN-PROC UNKNOWN UNKNOWN 0 0 FUNCTION) (UNKNOWN 0 0 0 UNKNOWN ()) 0
 0 () () 198 () () () 0 0)
@@ -232,6 +273,15 @@ UNKNOWN-PROC UNKNOWN UNKNOWN 0 0 FUNCTION) (UNKNOWN 0 0 0 UNKNOWN ()) 0
 DIMENSION DUMMY) (COMPLEX 8 0 0 COMPLEX ()) 0 0 () (1 0 EXPLICIT (
 CONSTANT (INTEGER 4 0 0 INTEGER ()) 0 '0') (OP (INTEGER 4 0 0 INTEGER ())
 0 MINUS (FUNCTION (INTEGER 4 0 0 INTEGER ()) 0 199 (('' (VARIABLE (
+=======
+201 'product' '(intrinsic)' 'product' 136 ((PROCEDURE UNKNOWN-INTENT
+UNKNOWN-PROC UNKNOWN UNKNOWN 0 0 FUNCTION) (UNKNOWN 0 0 0 UNKNOWN ()) 0
+0 () () 201 () () () 0 0)
+132 'tar' '' 'tar' 131 ((VARIABLE INOUT UNKNOWN-PROC UNKNOWN UNKNOWN 0 0
+DIMENSION DUMMY) (COMPLEX 8 0 0 COMPLEX ()) 0 0 () (1 0 EXPLICIT (
+CONSTANT (INTEGER 4 0 0 INTEGER ()) 0 '0') (OP (INTEGER 4 0 0 INTEGER ())
+0 MINUS (FUNCTION (INTEGER 4 0 0 INTEGER ()) 0 202 (('' (VARIABLE (
+>>>>>>> parent of 47a260a... try made multi-mode solver failed
 INTEGER 4 0 0 INTEGER ()) 1 133 ((COMPONENT 14 187 'dims') (ARRAY (FULL
 0))))) ('' ()) ('' ())) '_gfortran_product_i4' 0 'product') (CONSTANT (
 INTEGER 4 0 0 INTEGER ()) 0 '1'))) 0 () () () 0 0)
@@ -239,9 +289,15 @@ INTEGER 4 0 0 INTEGER ()) 0 '1'))) 0 () () () 0 0)
 DUMMY) (DERIVED 14 0 0 DERIVED ()) 0 0 () () 0 () () () 0 0)
 134 'val' '' 'val' 131 ((VARIABLE IN UNKNOWN-PROC UNKNOWN UNKNOWN 0 0
 OPTIONAL DUMMY) (COMPLEX 8 0 0 COMPLEX ()) 0 0 () () 0 () () () 0 0)
+<<<<<<< HEAD
 199 'product' '(intrinsic)' 'product' 131 ((PROCEDURE UNKNOWN-INTENT
 UNKNOWN-PROC UNKNOWN UNKNOWN 0 0 FUNCTION) (UNKNOWN 0 0 0 UNKNOWN ()) 0
 0 () () 199 () () () 0 0)
+=======
+202 'product' '(intrinsic)' 'product' 131 ((PROCEDURE UNKNOWN-INTENT
+UNKNOWN-PROC UNKNOWN UNKNOWN 0 0 FUNCTION) (UNKNOWN 0 0 0 UNKNOWN ()) 0
+0 () () 202 () () () 0 0)
+>>>>>>> parent of 47a260a... try made multi-mode solver failed
 128 'ten' '' 'ten' 127 ((VARIABLE IN UNKNOWN-PROC UNKNOWN UNKNOWN 0 0
 DUMMY) (DERIVED 14 0 0 DERIVED ()) 0 0 () () 0 () () () 0 0)
 129 'ten0' '' 'ten0' 127 ((VARIABLE UNKNOWN-INTENT UNKNOWN-PROC UNKNOWN
@@ -252,7 +308,14 @@ DUMMY) (DERIVED 14 0 0 DERIVED ()) 0 0 () () 0 () () () 0 0)
 DUMMY) (DERIVED 14 0 0 DERIVED ()) 0 0 () () 0 () () () 0 0)
 112 'ten0' '' 'ten0' 109 ((VARIABLE UNKNOWN-INTENT UNKNOWN-PROC UNKNOWN
 UNKNOWN 0 0 RESULT) (DERIVED 14 0 0 DERIVED ()) 0 0 () () 0 () () () 0 0)
+<<<<<<< HEAD
 >>>>>>> parent of 1e75352... Use HUGE_TENSOR and DATAPOOL
+=======
+36 'a' '' 'a' 35 ((VARIABLE IN UNKNOWN-PROC UNKNOWN UNKNOWN 0 0
+DIMENSION DUMMY) (COMPLEX 8 0 0 COMPLEX ()) 0 0 () (2 0 ASSUMED_SHAPE (
+CONSTANT (INTEGER 4 0 0 INTEGER ()) 0 '1') () (CONSTANT (INTEGER 4 0 0
+INTEGER ()) 0 '1') ()) 0 () () () 0 0)
+>>>>>>> parent of 47a260a... try made multi-mode solver failed
 174 'tens' '' 'tens' 173 ((VARIABLE IN UNKNOWN-PROC UNKNOWN UNKNOWN 0 0
 DIMENSION DUMMY) (DERIVED 14 0 0 DERIVED ()) 0 0 () (1 0 ASSUMED_SHAPE (
 CONSTANT (INTEGER 4 0 0 INTEGER ()) 0 '1') ()) 0 () () () 0 0)
@@ -269,12 +332,18 @@ CONSTANT (INTEGER 4 0 0 INTEGER ()) 0 '1') ()) 0 () () () 0 0)
 UNKNOWN 0 0 RESULT ALWAYS_EXPLICIT) (DERIVED 14 0 0 DERIVED ()) 0 0 () ()
 0 () () () 0 0)
 <<<<<<< HEAD
+<<<<<<< HEAD
 =======
 36 'a' '' 'a' 35 ((VARIABLE IN UNKNOWN-PROC UNKNOWN UNKNOWN 0 0
 DIMENSION DUMMY) (COMPLEX 8 0 0 COMPLEX ()) 0 0 () (2 0 ASSUMED_SHAPE (
 CONSTANT (INTEGER 4 0 0 INTEGER ()) 0 '1') () (CONSTANT (INTEGER 4 0 0
 INTEGER ()) 0 '1') ()) 0 () () () 0 0)
 >>>>>>> parent of 1e75352... Use HUGE_TENSOR and DATAPOOL
+=======
+37 'b' '' 'b' 35 ((VARIABLE UNKNOWN-INTENT UNKNOWN-PROC UNKNOWN UNKNOWN
+0 0 ALLOCATABLE DIMENSION RESULT ALWAYS_EXPLICIT) (COMPLEX 8 0 0 COMPLEX
+()) 0 0 () (2 0 DEFERRED () () () ()) 0 () () () 0 0)
+>>>>>>> parent of 47a260a... try made multi-mode solver failed
 178 'ten' '' 'ten' 177 ((VARIABLE IN UNKNOWN-PROC UNKNOWN UNKNOWN 0 0
 DUMMY) (DERIVED 14 0 0 DERIVED ()) 0 0 () () 0 () () () 0 0)
 179 'legs1' '' 'legs1' 177 ((VARIABLE IN UNKNOWN-PROC UNKNOWN UNKNOWN 0
@@ -304,15 +373,24 @@ UNKNOWN 0 0 RESULT ALWAYS_EXPLICIT) (DERIVED 14 0 0 DERIVED ()) 0 0 () ()
 119 'ten' '' 'ten' 118 ((VARIABLE INOUT UNKNOWN-PROC UNKNOWN UNKNOWN 0 0
 DUMMY) (DERIVED 14 0 0 DERIVED ()) 0 0 () () 0 () () () 0 0)
 <<<<<<< HEAD
+<<<<<<< HEAD
 =======
+=======
+>>>>>>> parent of 47a260a... try made multi-mode solver failed
 56 'inds' '' 'inds' 55 ((VARIABLE INOUT UNKNOWN-PROC UNKNOWN UNKNOWN 0 0
 DIMENSION DUMMY) (INTEGER 4 0 0 INTEGER ()) 0 0 () (1 0 EXPLICIT (
 CONSTANT (INTEGER 4 0 0 INTEGER ()) 0 '1') (VARIABLE (INTEGER 4 0 0
 INTEGER ()) 0 58 ())) 0 () () () 0 0)
+<<<<<<< HEAD
 65 'f' '' 'f' 64 ((VARIABLE IN UNKNOWN-PROC UNKNOWN UNKNOWN 0 0
 DIMENSION DUMMY) (INTEGER 4 0 0 INTEGER ()) 0 0 () (1 0 ASSUMED_SHAPE (
 CONSTANT (INTEGER 4 0 0 INTEGER ()) 0 '1') ()) 0 () () () 0 0)
 >>>>>>> parent of 1e75352... Use HUGE_TENSOR and DATAPOOL
+=======
+61 'f' '' 'f' 60 ((VARIABLE IN UNKNOWN-PROC UNKNOWN UNKNOWN 0 0
+DIMENSION DUMMY) (INTEGER 4 0 0 INTEGER ()) 0 0 () (1 0 ASSUMED_SHAPE (
+CONSTANT (INTEGER 4 0 0 INTEGER ()) 0 '1') ()) 0 () () () 0 0)
+>>>>>>> parent of 47a260a... try made multi-mode solver failed
 100 'ten' '' 'ten' 99 ((VARIABLE IN UNKNOWN-PROC UNKNOWN UNKNOWN 0 0
 DUMMY) (DERIVED 14 0 0 DERIVED ()) 0 0 () () 0 () () () 0 0)
 74 'nleg' '' 'nleg' 73 ((VARIABLE IN UNKNOWN-PROC UNKNOWN UNKNOWN 0 0
@@ -338,6 +416,10 @@ ASSUMED_SHAPE (CONSTANT (INTEGER 4 0 0 INTEGER ()) 0 '1') ()) 0 () () ()
 103 'mat' '' 'mat' 99 ((VARIABLE UNKNOWN-INTENT UNKNOWN-PROC UNKNOWN
 UNKNOWN 0 0 ALLOCATABLE DIMENSION RESULT ALWAYS_EXPLICIT) (COMPLEX 8 0 0
 COMPLEX ()) 0 0 () (2 0 DEFERRED () () () ()) 0 () () () 0 0)
+57 'vals' '' 'vals' 55 ((VARIABLE INOUT UNKNOWN-PROC UNKNOWN UNKNOWN 0 0
+DIMENSION DUMMY) (COMPLEX 8 0 0 COMPLEX ()) 0 0 () (1 0 EXPLICIT (
+CONSTANT (INTEGER 4 0 0 INTEGER ()) 0 '1') (VARIABLE (INTEGER 4 0 0
+INTEGER ()) 0 58 ())) 0 () () () 0 0)
 49 'mat' '' 'mat' 48 ((VARIABLE IN UNKNOWN-PROC UNKNOWN UNKNOWN 0 0
 DIMENSION DUMMY) (COMPLEX 8 0 0 COMPLEX ()) 0 0 () (2 0 ASSUMED_SHAPE (
 CONSTANT (INTEGER 4 0 0 INTEGER ()) 0 '1') () (CONSTANT (INTEGER 4 0 0
@@ -356,11 +438,17 @@ ASSUMED_SHAPE (CONSTANT (INTEGER 4 0 0 INTEGER ()) 0 '1') ()) 0 () () ()
 UNKNOWN 0 0 RESULT ALWAYS_EXPLICIT) (DERIVED 14 0 0 DERIVED ()) 0 0 () ()
 0 () () () 0 0)
 <<<<<<< HEAD
+<<<<<<< HEAD
 =======
 61 'zs' '' 'zs' 60 ((VARIABLE IN UNKNOWN-PROC UNKNOWN UNKNOWN 0 0
 DIMENSION DUMMY) (COMPLEX 8 0 0 COMPLEX ()) 0 0 () (1 0 ASSUMED_SHAPE (
 CONSTANT (INTEGER 4 0 0 INTEGER ()) 0 '1') ()) 0 () () () 0 0)
 >>>>>>> parent of 1e75352... Use HUGE_TENSOR and DATAPOOL
+=======
+75 'zs' '' 'zs' 74 ((VARIABLE IN UNKNOWN-PROC UNKNOWN UNKNOWN 0 0
+DIMENSION DUMMY) (COMPLEX 8 0 0 COMPLEX ()) 0 0 () (1 0 ASSUMED_SHAPE (
+CONSTANT (INTEGER 4 0 0 INTEGER ()) 0 '1') ()) 0 () () () 0 0)
+>>>>>>> parent of 47a260a... try made multi-mode solver failed
 184 'ten' '' 'ten' 183 ((VARIABLE IN UNKNOWN-PROC UNKNOWN UNKNOWN 0 0
 DUMMY) (DERIVED 14 0 0 DERIVED ()) 0 0 () () 0 () () () 0 0)
 185 'legs' '' 'legs' 183 ((VARIABLE IN UNKNOWN-PROC UNKNOWN UNKNOWN 0 0
@@ -370,6 +458,7 @@ CONSTANT (INTEGER 4 0 0 INTEGER ()) 0 '1') ()) 0 () () () 0 0)
 UNKNOWN 0 0 RESULT ALWAYS_EXPLICIT) (DERIVED 14 0 0 DERIVED ()) 0 0 () ()
 0 () () () 0 0)
 <<<<<<< HEAD
+<<<<<<< HEAD
 =======
 58 'nrec' '' 'nrec' 55 ((VARIABLE INOUT UNKNOWN-PROC UNKNOWN UNKNOWN 0 0
 DUMMY) (INTEGER 4 0 0 INTEGER ()) 0 0 () () 0 () () () 0 0)
@@ -377,6 +466,13 @@ DUMMY) (INTEGER 4 0 0 INTEGER ()) 0 0 () () 0 () () () 0 0)
 0 0 RESULT ALWAYS_EXPLICIT) (REAL 8 0 0 REAL ()) 0 0 () () 0 () () () 0
 0)
 >>>>>>> parent of 1e75352... Use HUGE_TENSOR and DATAPOOL
+=======
+58 'nrec' '' 'nrec' 55 ((VARIABLE INOUT UNKNOWN-PROC UNKNOWN UNKNOWN 0 0
+DUMMY) (INTEGER 4 0 0 INTEGER ()) 0 0 () () 0 () () () 0 0)
+76 'x' '' 'x' 74 ((VARIABLE UNKNOWN-INTENT UNKNOWN-PROC UNKNOWN UNKNOWN
+0 0 RESULT ALWAYS_EXPLICIT) (REAL 8 0 0 REAL ()) 0 0 () () 0 () () () 0
+0)
+>>>>>>> parent of 47a260a... try made multi-mode solver failed
 142 'ten' '' 'ten' 141 ((VARIABLE IN UNKNOWN-PROC UNKNOWN UNKNOWN 0 0
 DUMMY) (DERIVED 14 0 0 DERIVED ()) 0 0 () () 0 () () () 0 0)
 143 'legs' '' 'legs' 141 ((VARIABLE IN UNKNOWN-PROC UNKNOWN UNKNOWN 0 0
@@ -385,53 +481,6 @@ CONSTANT (INTEGER 4 0 0 INTEGER ()) 0 '1') ()) 0 () () () 0 0)
 144 'ten0' '' 'ten0' 141 ((VARIABLE UNKNOWN-INTENT UNKNOWN-PROC UNKNOWN
 UNKNOWN 0 0 RESULT ALWAYS_EXPLICIT) (DERIVED 14 0 0 DERIVED ()) 0 0 () ()
 0 () () () 0 0)
-197 'ten' '' 'ten' 196 ((VARIABLE IN UNKNOWN-PROC UNKNOWN UNKNOWN 0 0
-DUMMY) (DERIVED 14 0 0 DERIVED ()) 0 0 () () 0 () () () 0 0)
-164 'tar' '' 'tar' 163 ((VARIABLE INOUT UNKNOWN-PROC UNKNOWN UNKNOWN 0 0
-DIMENSION DUMMY) (COMPLEX 8 0 0 COMPLEX ()) 0 0 () (1 0 EXPLICIT (
-CONSTANT (INTEGER 4 0 0 INTEGER ()) 0 '0') (OP (INTEGER 4 0 0 INTEGER ())
-0 MINUS (FUNCTION (INTEGER 4 0 0 INTEGER ()) 0 198 (('' (VARIABLE (
-INTEGER 4 0 0 INTEGER ()) 1 165 ((COMPONENT 14 187 'dims') (ARRAY (FULL
-0))))) ('' ()) ('' ())) '_gfortran_product_i4' 0 'product') (CONSTANT (
-INTEGER 4 0 0 INTEGER ()) 0 '1'))) 0 () () () 0 0)
-165 'ten' '' 'ten' 163 ((VARIABLE IN UNKNOWN-PROC UNKNOWN UNKNOWN 0 0
-DUMMY) (DERIVED 14 0 0 DERIVED ()) 0 0 () () 0 () () () 0 0)
-198 'product' '(intrinsic)' 'product' 163 ((PROCEDURE UNKNOWN-INTENT
-UNKNOWN-PROC UNKNOWN UNKNOWN 0 0 FUNCTION) (UNKNOWN 0 0 0 UNKNOWN ()) 0
-0 () () 198 () () () 0 0)
-106 'tar' '' 'tar' 105 ((VARIABLE IN UNKNOWN-PROC UNKNOWN UNKNOWN 0 0
-DIMENSION DUMMY) (COMPLEX 8 0 0 COMPLEX ()) 0 0 () (1 0 EXPLICIT (
-CONSTANT (INTEGER 4 0 0 INTEGER ()) 0 '0') (OP (INTEGER 4 0 0 INTEGER ())
-0 MINUS (FUNCTION (INTEGER 4 0 0 INTEGER ()) 0 199 (('' (VARIABLE (
-INTEGER 4 0 0 INTEGER ()) 1 107 ((COMPONENT 14 187 'dims') (ARRAY (FULL
-0))))) ('' ()) ('' ())) '_gfortran_product_i4' 0 'product') (CONSTANT (
-INTEGER 4 0 0 INTEGER ()) 0 '1'))) 0 () () () 0 0)
-107 'ten' '' 'ten' 105 ((VARIABLE INOUT UNKNOWN-PROC UNKNOWN UNKNOWN 0 0
-DUMMY) (DERIVED 14 0 0 DERIVED ()) 0 0 () () 0 () () () 0 0)
-132 'tar' '' 'tar' 131 ((VARIABLE INOUT UNKNOWN-PROC UNKNOWN UNKNOWN 0 0
-DIMENSION DUMMY) (COMPLEX 8 0 0 COMPLEX ()) 0 0 () (1 0 EXPLICIT (
-CONSTANT (INTEGER 4 0 0 INTEGER ()) 0 '0') (OP (INTEGER 4 0 0 INTEGER ())
-0 MINUS (FUNCTION (INTEGER 4 0 0 INTEGER ()) 0 200 (('' (VARIABLE (
-INTEGER 4 0 0 INTEGER ()) 1 133 ((COMPONENT 14 187 'dims') (ARRAY (FULL
-0))))) ('' ()) ('' ())) '_gfortran_product_i4' 0 'product') (CONSTANT (
-INTEGER 4 0 0 INTEGER ()) 0 '1'))) 0 () () () 0 0)
-133 'ten' '' 'ten' 131 ((VARIABLE IN UNKNOWN-PROC UNKNOWN UNKNOWN 0 0
-DUMMY) (DERIVED 14 0 0 DERIVED ()) 0 0 () () 0 () () () 0 0)
-134 'val' '' 'val' 131 ((VARIABLE IN UNKNOWN-PROC UNKNOWN UNKNOWN 0 0
-OPTIONAL DUMMY) (COMPLEX 8 0 0 COMPLEX ()) 0 0 () () 0 () () () 0 0)
-200 'product' '(intrinsic)' 'product' 131 ((PROCEDURE UNKNOWN-INTENT
-UNKNOWN-PROC UNKNOWN UNKNOWN 0 0 FUNCTION) (UNKNOWN 0 0 0 UNKNOWN ()) 0
-0 () () 200 () () () 0 0)
-128 'ten' '' 'ten' 127 ((VARIABLE IN UNKNOWN-PROC UNKNOWN UNKNOWN 0 0
-DUMMY) (DERIVED 14 0 0 DERIVED ()) 0 0 () () 0 () () () 0 0)
-129 'ten0' '' 'ten0' 127 ((VARIABLE UNKNOWN-INTENT UNKNOWN-PROC UNKNOWN
-UNKNOWN 0 0 RESULT) (DERIVED 14 0 0 DERIVED ()) 0 0 () () 0 () () () 0 0)
-110 'ten1' '' 'ten1' 109 ((VARIABLE IN UNKNOWN-PROC UNKNOWN UNKNOWN 0 0
-DUMMY) (DERIVED 14 0 0 DERIVED ()) 0 0 () () 0 () () () 0 0)
-111 'ten2' '' 'ten2' 109 ((VARIABLE IN UNKNOWN-PROC UNKNOWN UNKNOWN 0 0
-DUMMY) (DERIVED 14 0 0 DERIVED ()) 0 0 () () 0 () () () 0 0)
-112 'ten0' '' 'ten0' 109 ((VARIABLE UNKNOWN-INTENT UNKNOWN-PROC UNKNOWN
-UNKNOWN 0 0 RESULT) (DERIVED 14 0 0 DERIVED ()) 0 0 () () 0 () () () 0 0)
 79 'ten' '' 'ten' 78 ((VARIABLE IN UNKNOWN-PROC UNKNOWN UNKNOWN 0 0
 DUMMY) (DERIVED 14 0 0 DERIVED ()) 0 0 () () 0 () () () 0 0)
 80 'legs1' '' 'legs1' 78 ((VARIABLE IN UNKNOWN-PROC UNKNOWN UNKNOWN 0 0
@@ -541,6 +590,7 @@ DUMMY) (REAL 8 0 0 REAL ()) 0 0 () () 0 () () () 0 0)
 UNKNOWN 0 0 ALLOCATABLE DIMENSION RESULT ALWAYS_EXPLICIT) (INTEGER 4 0 0
 INTEGER ()) 0 0 () (1 0 DEFERRED () ()) 0 () () () 0 0)
 <<<<<<< HEAD
+<<<<<<< HEAD
 58 'nrec' '' 'nrec' 55 ((VARIABLE INOUT UNKNOWN-PROC UNKNOWN UNKNOWN 0 0
 DUMMY) (INTEGER 4 0 0 INTEGER ()) 0 0 () () 0 () () () 0 0)
 56 'inds' '' 'inds' 55 ((VARIABLE INOUT UNKNOWN-PROC UNKNOWN UNKNOWN 0 0
@@ -561,6 +611,8 @@ INTEGER ()) 0 '1') ()) 0 () () () 0 0)
 61 'f' '' 'f' 60 ((VARIABLE IN UNKNOWN-PROC UNKNOWN UNKNOWN 0 0
 DIMENSION DUMMY) (INTEGER 4 0 0 INTEGER ()) 0 0 () (1 0 ASSUMED_SHAPE (
 CONSTANT (INTEGER 4 0 0 INTEGER ()) 0 '1') ()) 0 () () () 0 0)
+=======
+>>>>>>> parent of 47a260a... try made multi-mode solver failed
 63 'x' '' 'x' 60 ((VARIABLE UNKNOWN-INTENT UNKNOWN-PROC UNKNOWN UNKNOWN
 =======
 67 'x' '' 'x' 64 ((VARIABLE UNKNOWN-INTENT UNKNOWN-PROC UNKNOWN UNKNOWN
@@ -574,6 +626,7 @@ INTEGER ()) 1 65 ((ARRAY (FULL 0))))) ('' ()) ('' ())) '' 0 'size')) 0 ()
 UNKNOWN-PROC UNKNOWN UNKNOWN 0 0 FUNCTION) (UNKNOWN 0 0 0 UNKNOWN ()) 0
 <<<<<<< HEAD
 0 () () 62 () () () 0 0)
+<<<<<<< HEAD
 76 'x' '' 'x' 74 ((VARIABLE UNKNOWN-INTENT UNKNOWN-PROC UNKNOWN UNKNOWN
 0 0 RESULT ALWAYS_EXPLICIT) (REAL 8 0 0 REAL ()) 0 0 () () 0 () () () 0
 0)
@@ -583,6 +636,8 @@ UNKNOWN-PROC UNKNOWN UNKNOWN 0 0 FUNCTION) (UNKNOWN 0 0 0 UNKNOWN ()) 0
 =======
 0 () () 66 () () () 0 0)
 >>>>>>> parent of 1e75352... Use HUGE_TENSOR and DATAPOOL
+=======
+>>>>>>> parent of 47a260a... try made multi-mode solver failed
 152 'ten' '' 'ten' 151 ((VARIABLE IN UNKNOWN-PROC UNKNOWN UNKNOWN 0 0
 DUMMY) (DERIVED 14 0 0 DERIVED ()) 0 0 () () 0 () () () 0 0)
 154 'tens' '' 'tens' 153 ((VARIABLE IN UNKNOWN-PROC UNKNOWN UNKNOWN 0 0
@@ -615,6 +670,7 @@ DEFERRED () ()) 0 () () () 0 0)
 116 'ten' '' 'ten' 114 ((VARIABLE IN UNKNOWN-PROC UNKNOWN UNKNOWN 0 0
 DUMMY) (DERIVED 14 0 0 DERIVED ()) 0 0 () () 0 () () () 0 0)
 <<<<<<< HEAD
+<<<<<<< HEAD
 199 'product' '(intrinsic)' 'product' 105 ((PROCEDURE UNKNOWN-INTENT
 UNKNOWN-PROC UNKNOWN UNKNOWN 0 0 FUNCTION) (UNKNOWN 0 0 0 UNKNOWN ()) 0
 0 () () 199 () () () 0 0)
@@ -634,6 +690,11 @@ UNKNOWN-PROC UNKNOWN UNKNOWN 0 0 FUNCTION) (UNKNOWN 0 0 0 UNKNOWN ()) 0
 0 () () 201 () () () 0 0)
 =======
 >>>>>>> parent of 1e75352... Use HUGE_TENSOR and DATAPOOL
+=======
+199 'product' '(intrinsic)' 'product' 163 ((PROCEDURE UNKNOWN-INTENT
+UNKNOWN-PROC UNKNOWN UNKNOWN 0 0 FUNCTION) (UNKNOWN 0 0 0 UNKNOWN ()) 0
+0 () () 199 () () () 0 0)
+>>>>>>> parent of 47a260a... try made multi-mode solver failed
 )
 
 ('collect_inds' 0 8 'diag_mat' 0 13 'eye_ten' 0 18 'find_dcut' 0 23
@@ -646,9 +707,14 @@ UNKNOWN-PROC UNKNOWN UNKNOWN 0 0 FUNCTION) (UNKNOWN 0 0 0 UNKNOWN ()) 0
 0 2 'ten_print_0' 0 5 'ten_print_1' 0 4 'ten_prod' 0 155 'ten_represent'
 0 162 'ten_save_0' 0 7 'ten_save_1' 0 6 'ten_sum' 0 172 'ten_trace' 0
 <<<<<<< HEAD
+<<<<<<< HEAD
 176 'ten_trans' 0 182 'tensor' 0 14 'tensorial' 0 190 'zero_ten' 0 191
 'zval' 0 195)
 =======
 176 'ten_trans' 0 182 'tensor' 0 14 'tensorial' 0 190 'tol' 0 191
 'zero_ten' 0 192)
 >>>>>>> parent of 1e75352... Use HUGE_TENSOR and DATAPOOL
+=======
+176 'ten_trans' 0 182 'tensor' 0 14 'tensorial' 0 190 'tol' 0 191
+'zero_ten' 0 192 'zval' 0 196)
+>>>>>>> parent of 47a260a... try made multi-mode solver failed
