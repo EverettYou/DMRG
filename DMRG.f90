@@ -14,7 +14,7 @@ MODULE MODEL
 	REAL    :: BETA = 0.440687    ! inverse temperature 0.440687
 	! lattice
 	INTEGER :: LEN = 20
-	INTEGER :: CIR = 1024
+	INTEGER :: CIR = 256
 	! algorithm
 	INTEGER :: MAX_CUT = 8  ! 16
 	REAL    :: MAX_ERR = 0.
@@ -772,7 +772,7 @@ FUNCTION ANNEAL0(TS, W) RESULT (TVAL)
 	INTEGER :: DIM, D, DS, I, ITER
 	INTEGER, ALLOCATABLE :: LINDS(:), RINDS(:), ORDS(:)
 	COMPLEX, ALLOCATABLE :: V(:,:), VS(:,:), V1(:)
-	COMPLEX :: A(N,N), FID
+	COMPLEX :: A(N,N), TVAL
 	REAL, PARAMETER :: TOL = 1.E-12
 	
 	! leg indexing (remember to +1)
