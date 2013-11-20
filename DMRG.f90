@@ -11,8 +11,8 @@ MODULE MODEL
 	REAL    :: THETA = 0.*PI ! theta-term
 	REAL    :: CROSS = 1.    ! crossing: 1. = allow, 0. = avoid
 	REAL    :: BETA = 0.440687    ! inverse temperature 0.440687
-	INTEGER :: LEN = 20 
-	INTEGER :: MAX_CUT = 8  ! 16
+	INTEGER :: LEN = 50 
+	INTEGER :: MAX_CUT = 10  ! 16
 	REAL    :: MAX_ERR = 0.
 	INTEGER :: SWEEPS = 1
 END MODULE MODEL
@@ -717,65 +717,65 @@ FUNCTION LOC_MAX_MODE(D) RESULT (P)
 END FUNCTION LOC_MAX_MODE
 ! ----------- Measure -----------
 ! measure operators O's on MPS X
-FUNCTION MEASURE(WS, OS) RESULT (M)
-! input: WS - MPSs, OS - MPOs
+FUNCTION MEASURE(OS) RESULT (M)
+! input: OS - MPOs
 ! output: M - correlation function
 ! M is output in terms of a tensor:
 ! leg <-> operator, index on leg <-> position of operator 
 	USE MODEL
-	USE MATH
-	TYPE(TENSOR), INTENT(IN) :: WS(:), OS(:)
+	USE MATH ! BINOMIAL
+	TYPE(TENSOR), INTENT(IN) :: OS(:)
 	TYPE(TENSOR) :: M
 	! local tensors
 	TYPE(TENSOR) :: E
 	! local variables
-	INTEGER :: L, K, N
+	INTEGER :: I, K, N
 	
-	L = SIZE(WS) ! get the num of sites
 	K = SIZE(OS) ! get the num of operators
 	! deal with some special cases
 	IF (K == 0) THEN ! if no operator
 		M = ZERO_TEN([INTEGER::]) ! return null tensor
 		RETURN	
 	END IF
-	IF (L == 0) THEN ! if no lattice
-		M = ZERO_TEN([(L,L=1,K)]) ! return null tensor
+	IF (LEN == 0) THEN ! if no lattice
+		M = ZERO_TEN([(0,I=1,K)]) ! return null tensor
 		RETURN
 	END IF
 	! now L and K are both non-zero
- 	N = BINOMIAL(L, K) ! cal the size of correlation func
+ 	N = BINOMIAL(LEN, K) ! cal the size of correlation func
  	IF (N == 0) THEN ! if not able to put down operators
- 		M = ZERO_TEN([(L,N=1,K)]) ! return null tensor
+ 		M = ZERO_TEN([(LEN,I=1,K)]) ! return null tensor
  		RETURN
  	END IF
  	! now N is also non-zero, the normal case
 	! allocate space for M
 	ALLOCATE(M%DIMS(K),M%INDS(N),M%VALS(N))
-	M%DIMS = L  ! each leg can go through the lattice L
+	M%DIMS = LEN ! each leg can go through the lattice LEN
 	M%INDS = 0  ! clean up
 	M%VALS = Z0 ! clean up
 	! carry out recursive measurement
-	CALL SET_M(L, M%INDS, M%VALS, WS, OS) ! enter without environment
+	CALL SET_M1(LEN, M%INDS, M%VALS, OS) ! enter without environment
 	! on exit, M has been filled with measurement data, return
 END FUNCTION MEASURE
 ! measurement kernel
-RECURSIVE SUBROUTINE SET_M(L0, INDS, VALS, WS, OS, E0)
-! input: L0 - total lattice size
+RECURSIVE SUBROUTINE SET_M1(LA, INDS, VALS, OS, E0)
+! input: LA - num of remaining sites
 !        INDS - indices, VALS - measurement values
-!        WS - MPSs, OS - MPOs, E0 - environment
+!        OS - MPOs, E0 - environment
 ! output: INDS, VALS - modified by new measurement data
 ! E0 optional: if missing, make it initialized
-	INTEGER, INTENT(IN) :: L0
+	USE MODEL ! LEN
+	USE DATAPOOL ! WA(:)
+	INTEGER, INTENT(IN)    :: LA
 	INTEGER, INTENT(INOUT) :: INDS(:)
 	COMPLEX, INTENT(INOUT) :: VALS(:)
-	TYPE(TENSOR), INTENT(IN) :: WS(:), OS(:)
+	TYPE(TENSOR), INTENT(IN) :: OS(:)
 	TYPE(TENSOR), OPTIONAL, INTENT(IN) :: E0
 	! local tensor
 	TYPE(TENSOR) :: E
 	! local variables
-	INTEGER :: L, K, I, N1, N2
+	INTEGER :: K, I, N1, N2
 		
-	L = SIZE(WS) ! get the num of sites
 	K = SIZE(OS) ! get the num of operators
 	! check E0 input
 	IF (PRESENT(E0)) THEN ! if given
@@ -794,34 +794,34 @@ RECURSIVE SUBROUTINE SET_M(L0, INDS, VALS, WS, OS, E0)
 	! now E has been set, lay down operators
 	IF (K == 1) THEN ! for the last operator OS(1)
 		! make direct measurement on the current lattice
-		DO I = L, 1, -1
+		DO I = LA, 1, -1
 			! record the index of measurement
 			INDS(I) = I - 1
-			! grow E with OS(1) at WS(I) and evaluate
-			VALS(I) = EVALUATE(GROW(E, WS(I), OS(1))) ! rec the data
+			! grow E with OS(1) at WA(I) and evaluate
+			VALS(I) = EVALUATE(GROW(E, WA(I), OS(1))) ! rec the data
 			! now E can be updated to I-1 lattice
-			E = GROW(E, WS(I)) ! by absorbing WS(I)
+			E = GROW(E, WA(I)) ! by absorbing WA(I)
 		END DO
 	ELSE
 		N1 = SIZE(VALS) ! get the size of correlation function
-		DO I = L, 1, -1
+		DO I = LA, 1, -1
 			! cal the workspace range
 			N2 = N1 ! upper range from previous lower range
-			N1 = N1*(I-K)/I ! lower range update
+			N1 = N1*(I - K)/I ! lower range update
 			! grow E with the last OS(K) at WS(I)
-			! passing the remaining WS and OS to the lower level SET_M
+			! passing the remaining OS to the lower level SET_M
 			! with the workspace bounded by N1+1:N2 
-			CALL SET_M(L0,INDS(N1+1:N2),VALS(N1+1:N2),WS(:I-1),OS(:K-1),GROW(E,WS(I),OS(K)))
+			CALL SET_M1(I-1,INDS(N1+1:N2),VALS(N1+1:N2),OS(:K-1),GROW(E,WA(I),OS(K)))
 			! on return, VALS contains the measurement values
 			! and INDS contains the indices in the lower level
-			! for this level, inds must be lifted by L0 and shifted by (I-1)
-			INDS(N1+1:N2) = INDS(N1+1:N2) + (I-1)*L0**(K-1)
+			! for this level, inds must be lifted by LEN and shifted by (I-1)
+			INDS(N1+1:N2) = INDS(N1+1:N2) + (I-1)*LEN**(K-1)
 			! the measurement has complete
 			! now E can be updated to I-1 lattice
-			E = GROW(E, WS(I)) ! by absorbing WS(I)
+			E = GROW(E, WA(I)) ! by absorbing WA(I)
 		END DO
 	END IF
-END SUBROUTINE SET_M
+END SUBROUTINE SET_M1
 ! grow environment tensor
 FUNCTION GROW(E, W, O) RESULT(E1)
 ! input: E - environment tensor, W - MPS tensor
@@ -1029,22 +1029,16 @@ END SUBROUTINE TEST_DMRG
 SUBROUTINE TEST_MEASURE()
 	USE MATHIO
 	USE MODEL
-	TYPE(TENSOR) :: TB, WA(LEN)
-	TYPE(TENSOR) :: MA, OS(2)
-	COMPLEX, ALLOCATABLE :: W(:)
+	TYPE(TENSOR) :: M, OS(2)
 	INTEGER :: I
 	
-!	WRITE (*,'(A,I3,A,F5.2,A,F5.2,A,F5.2)') 'cut = ', MAX_CUT, ', theta = ', THETA/PI, '*pi, beta = ', BETA, ', crossing = ', CROSS
-!	CALL SET_MPO(TB)
-!	CALL DMRG(TB, WA)
-!	DO I = 1,2
-!		OS(I) = PAULI_MAT([3])
-!	END DO
-!	CALL TEN_SAVE('WA',WA)
-!!	W = MPS(WA)
-!!	CALL EXPORT('W',W)
-!	MA = MEASURE(WA, OS)
-!	CALL TEN_SAVE('MA',MA)
+	WRITE (*,'(A,I3,A,F5.2,A,F5.2,A,F5.2)') 'cut = ', MAX_CUT, ', theta = ', THETA/PI, '*pi, beta = ', BETA, ', crossing = ', CROSS
+	CALL DMRG()
+	DO I = 1,2
+		OS(I) = PAULI_MAT([3])
+	END DO
+	M = MEASURE(OS)
+	CALL TEN_SAVE('M',M)
 END SUBROUTINE TEST_MEASURE
 ! test transfer matrix
 SUBROUTINE TEST_TRANSF()
@@ -1100,8 +1094,8 @@ PROGRAM MAIN
 	PRINT *, '------------ DMRG -------------'
 
 !	CALL TEST()
-	CALL TEST_DMRG()
-!	CALL TEST_MEASURE()
+!	CALL TEST_DMRG()
+	CALL TEST_MEASURE()
 !	CALL TEST_TRANSF()
 !	CALL COLLECT([0.4406])
 END PROGRAM MAIN
