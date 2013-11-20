@@ -8,10 +8,14 @@ END MODULE CONST
 ! ############### MODEL ###################
 MODULE MODEL
 	USE CONST
-	REAL    :: THETA = 0.*PI ! theta-term
+	! physical
+	REAL    :: THETA = 1.*PI ! theta-term
 	REAL    :: CROSS = 1.    ! crossing: 1. = allow, 0. = avoid
 	REAL    :: BETA = 0.440687    ! inverse temperature 0.440687
-	INTEGER :: LEN = 20 
+	! lattice
+	INTEGER :: LEN = 20
+	INTEGER :: CIR = 256
+	! algorithm
 	INTEGER :: MAX_CUT = 8  ! 16
 	REAL    :: MAX_ERR = 0.
 	INTEGER :: SWEEPS = 1
@@ -24,7 +28,9 @@ MODULE MATH
 		TYPE(TENSOR) :: TEN ! tensor content
 		REAL :: LEV ! scale by EXP(LEV)
 	END TYPE HUGE_TENSOR
+	REAL :: SCHUR_TOL
 CONTAINS
+! ----------- tensor -------------
 ! rescale huge tensor
 SUBROUTINE RESCALE(A)
 ! inout: A - huge tensor to be rescaled (in place)
@@ -38,6 +44,7 @@ SUBROUTINE RESCALE(A)
 		A%LEV = A%LEV + LOG(R) ! update the lev
 	END IF
 END SUBROUTINE RESCALE
+! -------- combinatorial ---------
 ! cal binomial
 FUNCTION BINOMIAL(L, K) RESULT(N)
 ! N = L!/(L-K)!K!
@@ -58,6 +65,343 @@ FUNCTION BINOMIAL(L, K) RESULT(N)
 		N = N*(L-I+1)/I ! cal binomial product
 	END DO
 END FUNCTION BINOMIAL
+! ------- linear algebra ---------
+! orthogonalization
+SUBROUTINE ORTHOGONALIZE(V, D)
+! in-place orthogonalization
+! D - orthogonalized space dimension
+	COMPLEX, INTENT(INOUT) :: V(:,:)
+	INTEGER, INTENT(INOUT) :: D
+	! local variables
+	INTEGER :: N, I, J
+	COMPLEX :: B
+	REAL, PARAMETER :: TOL = 1.E-12
+	
+	N = SIZE(V,2)
+	IF (D > N) D = N
+	DO I = 1, D
+		DO J = 1, I-1
+			B = DOT_PRODUCT(V(:,J),V(:,I))
+			V(:,I) = V(:,I) - B * V(:,J)
+		END DO
+		B = DOT_PRODUCT(V(:,I),V(:,I))
+		IF (ABS(B) <= TOL) THEN
+			D = I - 1
+			RETURN
+		ELSE
+			V(:,I) = V(:,I)/SQRT(B)
+		END IF
+	END DO
+	D = N
+END SUBROUTINE ORTHOGONALIZE
+! random orthogonal basis
+SUBROUTINE RAND_BASIS(V, D)
+! inout: V - hold the basis, in: D - num of basis
+	USE CONST
+	COMPLEX, INTENT(INOUT) :: V(:,:)
+	INTEGER, INTENT(INOUT) :: D
+	REAL, ALLOCATABLE :: R(:,:)
+	
+	ALLOCATE(R(SIZE(V,1),D))
+	CALL RANDOM_NUMBER(R)
+	R = R - 0.5
+	V = Z0
+	V(:,:D) = CMPLX(R)
+	CALL ORTHOGONALIZE(V, D)
+END SUBROUTINE RAND_BASIS
+! Arnoldi iteration
+SUBROUTINE ARNOLDI(A, N, V, D, VALS, LINDS, RINDS)
+! construct Krylov basis V, and represent the action of sparse matrix in A
+! A - representation matrix
+! N - dim of Krylov basis
+! V - Krylov space basis
+! D - untouched subspace dim
+! VALS, TLINS, TRINDS - vals, l and r inds of T mat
+	USE MATHIO
+	USE CONST
+	COMPLEX, INTENT(INOUT) :: A(:,:)
+	COMPLEX, TARGET, INTENT(INOUT) :: V(:,:)
+	COMPLEX, INTENT(IN) :: VALS(:)
+	INTEGER, INTENT(IN) :: N, LINDS(:), RINDS(:)
+	INTEGER, INTENT(INOUT) :: D
+	! local variables
+	INTEGER :: DIM, I, J, K
+	COMPLEX, TARGET, ALLOCATABLE :: W(:)
+	COMPLEX, POINTER :: MV(:)
+	REAL, PARAMETER :: TOL = 1.E-12
+	
+	DIM = SIZE(V,1) ! get Hilbert space dimension
+	! represent T on the first D basis of V
+	A = Z0 ! clear
+	I = 1  ! leading vector pointer
+	IF (D >= N) THEN
+		WRITE(*,'(A)')'ARNOLDI::full: Krylov space is full.'
+		K = N + 1 ! no new vector to be added
+		D = N ! Krylov space cut off at N
+		IF (.NOT.ALLOCATED(W)) THEN
+			ALLOCATE(W(DIM)) ! get additional space
+			MV => W ! point to that
+		END IF
+	ELSE ! set new vector pointer
+		K = D + 1
+		MV => V(:,K) ! point work space to V(K)
+	END IF ! here K <= N
+	DO WHILE(I <= N .AND. I <= D)
+		! apply T: V(K) <- T*V(I)
+		CALL MV_ACTION(V(:,I), MV, VALS, LINDS, RINDS)
+		DO J = 1, D
+			! cal overlap with previous
+			A(J,I) = DOT_PRODUCT(V(:,J),MV)
+			! project out previous components
+			MV = MV - A(J,I)*V(:,J)
+		END DO
+		IF (K <= N) THEN ! if K is not outside
+			! cal norm of residual V(K)
+			A(K,I) = SQRT(DOT_PRODUCT(MV, MV))
+			! if normalizable
+			IF (ABS(A(K,I)) > TOL) THEN
+				MV = MV/A(K,I) ! normalize
+				D = K ! Krylov space dim enlarged to K
+				! if K+1 available, K inc
+				IF (K < N) THEN
+					K = K + 1 ! K will not exceed N
+					MV => V(:,K) ! point to the new V(K)
+				ELSE ! V has used up allocate additional work space
+					K = N + 1 ! K is out
+					IF (.NOT.ALLOCATED(W)) THEN
+						ALLOCATE(W(DIM)) ! get additional space
+						MV => W ! point to that
+					END IF
+				END IF
+			! if V(K) null, D will not increase
+			END IF
+		END IF
+		I = I + 1 ! next vector
+	END DO
+END SUBROUTINE ARNOLDI
+! apply M to V1 resulting in V2
+SUBROUTINE MV_ACTION(V1, V2, VALS, LINDS, RINDS)
+! M is given in sparse form,
+! M(LINDS,RINDS) = VALS
+	USE CONST
+	COMPLEX, INTENT(IN) :: V1(:), VALS(:)
+	INTEGER, INTENT(IN) :: LINDS(:), RINDS(:)
+	COMPLEX, INTENT(INOUT) :: V2(:)
+	! local variable
+	INTEGER :: NREC, IREC
+	
+	NREC = SIZE(VALS) ! get num of records
+	V2 = Z0 ! clear
+	DO IREC = 1,NREC ! for all records
+		V2(LINDS(IREC)) = V2(LINDS(IREC)) + VALS(IREC)*V1(RINDS(IREC))
+	END DO
+END SUBROUTINE MV_ACTION
+! Schur decomposition (LAPACK)
+SUBROUTINE SCHUR(A, V, TOL)
+! Schur decomposition of A (in-place)
+! returning Schur form S and unitary V
+! such that A -> V*S*V^H
+	COMPLEX, INTENT(INOUT) :: A(:,:)
+	COMPLEX, ALLOCATABLE, INTENT(OUT) :: V(:,:)
+	REAL, OPTIONAL :: TOL
+	! local variables
+	COMPLEX, ALLOCATABLE :: W(:), WORK(:)
+	INTEGER :: N, SDIM, INFO
+	REAL, ALLOCATABLE :: RWORK(:)
+	LOGICAL, ALLOCATABLE :: BWORK(:)
+	
+	! set tolerance
+	IF (PRESENT(TOL)) THEN
+		SCHUR_TOL = TOL
+	ELSE
+		SCHUR_TOL = 1.E-12
+	END IF
+	! get size
+	N = SIZE(A,1)
+	! allocate space
+	ALLOCATE(W(N),V(N,N),WORK(2*N),RWORK(N),BWORK(N))
+	! call LAPACK for Schur decomposition
+	CALL ZGEES('V','S',SEL,N,A,N,SDIM,W,V,N,WORK,2*N,RWORK,BWORK,INFO)
+	IF (INFO /= 0) THEN ! error handling
+		IF (INFO > 0) THEN
+			WRITE (*,'(A)') 'SCHUR::fcnv: the QR algorithm failed.'
+		ELSE
+			WRITE (*,'(A,I3)') 'SCHUR::xinf: ZGEEV error ', INFO
+		END IF
+	END IF
+	! truncate and output
+	IF (SDIM /= 0 .AND. SDIM /= N) THEN
+		V = V(:,:SDIM)
+	END IF
+END SUBROUTINE SCHUR
+! Schur decomposition selection function
+FUNCTION SEL(Z) RESULT(Q)
+	COMPLEX, INTENT(IN) :: Z
+	LOGICAL :: Q
+	
+	Q = (ABS(Z)>SCHUR_TOL)
+END FUNCTION SEL
+! matrix power
+RECURSIVE FUNCTION MATPOWER(M, N) RESULT (A)
+! return A = M^N
+	USE CONST
+	COMPLEX, INTENT(IN) :: M(:,:)
+	INTEGER, INTENT(IN) :: N
+	COMPLEX, ALLOCATABLE :: A(:,:)
+	! local variables
+	INTEGER :: N1
+	COMPLEX, ALLOCATABLE :: B(:,:)
+	
+	SELECT CASE(N)
+		CASE (1)
+			A = M
+		CASE (2)
+			A = MATMUL(M,M)
+		CASE (3:)
+			IF (MODULO(N,2) == 0) THEN
+				N1 = N/2
+				B = MATPOWER(M,N1)
+				A = MATMUL(B,B)
+			ELSE
+				N1 = (N-1)/2
+				B = MATPOWER(M,N1)
+				A = MATMUL(MATMUL(B,B),M)
+			END IF
+		CASE DEFAULT
+			A = M
+			WRITE(*,'(A)')'MATPOWER::ipow: zero and negative power is not supported yet.'
+	END SELECT
+END FUNCTION MATPOWER
+! diagonal of matrix
+FUNCTION DIAGONAL(M) RESULT(D)
+! input: M - matrix, output: D - diagonal
+! such that D(I) = M(I,I)
+        COMPLEX, INTENT(IN) :: M(:,:)
+        COMPLEX, ALLOCATABLE :: D(:)
+        ! local variable
+        INTEGER :: I, N
+        
+        N = MINVAL(SHAPE(M)) ! get min dim
+        ALLOCATE(D(N)) ! allocate space
+        FORALL (I = 1:N) ! filling data
+                D(I) = M(I,I)
+        END FORALL
+END FUNCTION DIAGONAL
+! ----------- sort -------------
+! ordering (by merge sort)
+FUNCTION D_ORDERING(F) RESULT(X)
+! return the ordering of F in X
+! such that F(X) follows the descending order
+	REAL, INTENT(IN) :: F(:) ! input data array
+	INTEGER, TARGET  :: X(SIZE(F)) ! output ordering
+	! local variables
+	INTEGER, TARGET  :: Y(SIZE(F)) ! work space
+	INTEGER, POINTER :: A(:), B(:)  ! pointer to X,Y
+ 	INTEGER :: S(SIZE(F) + 1) ! sector initial marker
+	INTEGER :: IS, NS
+	INTEGER :: LA0, LA1, LA2, IA1, IA2, IB
+	LOGICAL :: AB
+	REAL :: F0
+	
+	! prepare the initial X as the index for F
+	X = [(IS, IS = 1, SIZE(F))]
+	IF (SIZE(F) <= 1) RETURN ! if size(F) <= 1, no need to sort 
+	! the algorithm first partition X into sectors
+	! the initial position of each sector in S
+	! last element in S = end position + 1
+	! initialize sector pointer
+	NS = SIZE(F) + 1
+	S = [(IS, IS = 1, NS)]! each element is a sector on entrance
+	! start merge sort iteration
+	AB = .TRUE. ! set AB to T, s.t. A => X, B => Y first
+	DO WHILE (NS > 2) !  if there are more than 1 sector to merge
+		! point A, B to X, Y alternatively
+		IF (AB) THEN
+			A => X
+			B => Y
+		ELSE
+			A => Y
+			B => X
+		END IF
+		AB = .NOT. AB ! flip AB
+		! start to merge sectors in A (2 by 2) to B
+		IB = 1 ! rewind IB to the begining
+		! IB++, as data move from A -> B
+		DO IS = 2, NS, 2 ! IS proceed 2 by 2
+			! merge A(S(IS-1:IS)), A(S(IS:IS+1)) to B(MS:MS+1)
+			! prepare splits for A from S table
+			LA0 = S(IS-1)
+			LA1 = S(IS)
+			! the first sector is always well-defined
+			! but the second sector may be empty
+			IF (IS < NS) THEN ! if next sector available
+				LA2 = S(IS+1) ! get split from S table
+			ELSE ! when IS = NS, the second sector is empty
+				LA2 = LA1 ! set split to LA1, nothing will be taken
+			END IF
+			! merge A(LA0:LA1-1) and A(LA1:LA2-1)
+			! ----[-----)[-----)-------
+			!    LA0    LA1   LA2
+			IA1 = LA0 ! start IA1 from LA0
+			IA2 = LA1 ! start IA2 from LA1
+			DO WHILE (IA1 < LA1 .AND. IA2 < LA2)
+				IF (F(A(IA1)) > F(A(IA2))) THEN ! F(A(IA1)) is greater
+					B(IB) = A(IA1) ! greater first
+					IB = IB + 1    ! IB inc
+					IA1 = IA1 + 1  ! next
+				ELSEIF (F(A(IA1)) < F(A(IA2))) THEN ! F(A(IA2)) is greater
+					B(IB) = A(IA2) ! greater first
+					IB = IB + 1	   ! IB inc
+					IA2 = IA2 + 1  ! next
+				ELSE ! F(A(IA1)) == F(A(IA2)), duplicated
+					F0 = F(A(IA1)) ! rec F
+					! rec all duplicates with order preserved					
+					! wind IA1 to next distinct entries
+					DO WHILE (F(A(IA1))==F0)
+						B(IB) = A(IA1) ! rec duplicated entry
+						IB = IB + 1    ! IB inc
+						IA1 = IA1 + 1  ! next IA1
+						IF (IA1 == LA1) EXIT ! exit if reach the end
+					END DO
+					! wind IA2 to next distinct entries
+					DO WHILE (F(A(IA2))==F0)
+						B(IB) = A(IA2) ! rec duplicated entry
+						IB = IB + 1    ! IB inc
+						IA2 = IA2 + 1  ! next IA2
+						IF (IA2 == LA2) EXIT ! exit if reach the end
+					END DO
+				END IF
+			END DO ! IA1 == LA1 or IA2 == LA2
+			! now one of the sector has been exausted
+			! check which
+			IF (IA1 == LA1) THEN ! sector 1 exausted
+				! dump the rest of sector 2 -> B
+				DO WHILE (IA2 < LA2)
+					B(IB) = A(IA2)
+					IA2 = IA2 + 1
+					IB = IB + 1
+				END DO
+			ELSE ! IA2 == LA2 , sector 2 exausted
+				! dump the rest of sector 1 -> B
+				DO WHILE (IA1 < LA1)
+					B(IB) = A(IA1)
+					IA1 = IA1 + 1
+					IB = IB + 1
+				END DO
+			END IF
+			! now the sublists are merged into B
+			! the next B sector start with the crrent IB
+			! record it into the stack
+			S(IS/2 + 1) = IB
+		END DO
+		! all the sublists in A are merged into B
+		NS = IS/2 ! set the new stack top
+	END DO
+	! now B is sorted
+	! copy data to X
+	X = B
+!	PRINT '(100F5.1)',F(X)
+END FUNCTION D_ORDERING
 ! end of module MATH
 END MODULE MATH
 ! ############## DATAPOOL #################
@@ -90,6 +434,8 @@ MODULE DATAPOOL
 	TYPE(TENSOR), TARGET, PRIVATE :: T(2)
 	TYPE(TENSOR), TARGET, ALLOCATABLE, PRIVATE :: W(:)
 	TYPE(HUGE_TENSOR), TARGET, ALLOCATABLE, PRIVATE :: D(:)
+	! temp
+	TYPE(TENSOR) :: TS_OUT
 CONTAINS
 ! allocate space for datapool
 SUBROUTINE DAT_ALLOCATE()
@@ -266,6 +612,8 @@ SUBROUTINE IDMRG()
 		CALL RESCALE(DA(L))
 		CALL RESCALE(DB(L))
 	END IF
+	
+	TS_OUT = TS
 END SUBROUTINE IDMRG
 ! finite-size DMRG step (forward convention)
 SUBROUTINE FDMRG()
@@ -427,294 +775,105 @@ FUNCTION ANNEAL(TS, W) RESULT (TVAL)
 	TYPE(TENSOR), INTENT(INOUT) :: W
 	COMPLEX :: TVAL
 	
-! +++++++++ choose a solver here +++++++++++
-!	TVAL = ANNEAL0(TS, W) ! self-made (fas, unstable)
-	TVAL = ANNEAL1(TS, W) ! package (slower, robust)
-! ++++++++++++++++++++++++++++++++++++++++++
+	TVAL = ANNEAL0(TS,W)
 END FUNCTION ANNEAL
-! self-made Arnoldi algorithm (fast, unstable)
+! anneal the state W to the ground state of TS
 FUNCTION ANNEAL0(TS, W) RESULT (TVAL)
-! called by ANNEAL
+! input: TS - system transfer tensor, W - state
+! on output: W  is modified to the fixed point state
+! return the corresponding eigen value TVAL
 	USE CONST
+	USE MATH
 	TYPE(TENSOR), INTENT(IN) :: TS
 	TYPE(TENSOR), INTENT(INOUT) :: W
 	COMPLEX :: TVAL
 	! parameters
 	INTEGER, PARAMETER :: N = 16 ! Krylov space dimension
-	INTEGER, PARAMETER :: MAX_ITER = 500 ! max interation
-	REAL, PARAMETER :: TOL = 1.E-12 ! allowed error of Tval
+	INTEGER, PARAMETER :: MAX_ITER =8 ! max interation
 	! local variables
-	INTEGER :: DIM, I, J, K, ITER, INFO
-	INTEGER, ALLOCATABLE :: LINDS(:), RINDS(:), WINDS(:)
-	COMPLEX, ALLOCATABLE :: V(:,:)
-	COMPLEX :: TVAL0, A(N,N), D(N),Z(N,N),WORK(65*N)
-	REAL :: RWORK(2*N)
-	LOGICAL :: EXH
+	INTEGER :: DIM, D, DS, I, ITER
+	INTEGER, ALLOCATABLE :: LINDS(:), RINDS(:), ORDS(:)
+	COMPLEX, ALLOCATABLE :: V(:,:), VS(:,:), V1(:)
+	COMPLEX :: A(N,N), FID
+	REAL, PARAMETER :: TOL = 1.E-12
 	
-	! unpack data from tensor
-	! collect leg-combined inds in TS and W (remember to +1)
-	LINDS = COLLECT_INDS(TS,[1,3,5,7])+1
-	RINDS = COLLECT_INDS(TS,[2,4,6,8])+1
-	WINDS = COLLECT_INDS(W,[1,2,3,4])+1
-	! cal total dim of W
+	COMPLEX, ALLOCATABLE :: A0(:,:)
+	
+	! leg indexing (remember to +1)
+	LINDS = COLLECT_INDS(TS,[1,3,5,7]) + 1
+	RINDS = COLLECT_INDS(TS,[2,4,6,8]) + 1
+	! get dim of Hilbert space
 	DIM = PRODUCT(W%DIMS)
 	! allocate Krylov space
-	ALLOCATE(V(DIM,N))
+	ALLOCATE(V(DIM,N),V1(DIM))
 	V = Z0 ! clear
 	! dump W to the 1st col of V
-	FORALL (I = 1:SIZE(W%INDS))
-		V(WINDS(I),1) = W%VALS(I)
-	END FORALL
+	CALL TEN_REPRESENT(V(:,1), W)
 	V(:,1) = V(:,1)/SQRT(DOT_PRODUCT(V(:,1),V(:,1))) ! normalize
-	! prepare to start Arnoldi iteration
-	TVAL0 = Z0
-	EXH = .FALSE. ! space exhausted flag
-	! use Arnoldi iteration algorithm
+	D = 1 ! set subspace dim
+	! start Arnoldi iteration
 	DO ITER = 1, MAX_ITER
-		A = Z0 ! initialize Heisenberg matrix
-		! construct Krylov space
-		DO K = 2, N
-			! apply TS to V(:,K-1) -> V(:,K)
-			V(:,K) = Z0
-			DO I = 1,SIZE(TS%INDS)
-				V(LINDS(I),K) = V(LINDS(I),K) + TS%VALS(I)*V(RINDS(I),K-1)
-			END DO
-			! orthogonalization by stabilized Gram–Schmidt process
-			DO J = 1, K-1
-				A(J,K-1) = DOT_PRODUCT(V(:,J),V(:,K))
-				V(:,K) = V(:,K) - A(J,K-1)*V(:,J)
-			END DO
-			! cal the norm of residual vector
-			A(K,K-1) = SQRT(DOT_PRODUCT(V(:,K),V(:,K)))
-			! if it is vanishing, the Arnoldi iteration has broken down
-			IF (ABS(A(K,K-1))<TOL) THEN
-				EXH = .TRUE.
-				EXIT ! exit the iteration, stop construction of Krylov space
-			END IF
-			! otherwise, normalize the residual vect to a new basis vect
-			V(:,K) = V(:,K)/A(K,K-1)
-		END DO !K
-		! now the Heisenberg matrix has been constructed
-		! the action of TS is represented on the basis V as A
-		! call LAPACK to diagonalize A
-		CALL ZGEEV('N','V',N,A,N,D,Z,1,Z,N,WORK,65*N,RWORK,INFO)
-		! now D holds the eigen vals, and Z the eigen vects
-		! find the max abs eigen val
-		I = LOC_MAX_MODE(D)
-		TVAL = D(I) ! save it in Tval
-		! reorganize the eigen vector from Z(:,I)
-		V(:,1) = MATMUL(V,Z(:,I)) ! save to 1st col of V
-		V(:,1) = V(:,1)/SQRT(DOT_PRODUCT(V(:,1),V(:,1))) ! normalize
-		! check convergence
-		! if space exhausted, or relative error < tol
-		IF (EXH .OR. ABS((TVAL-TVAL0)/TVAL) < TOL) THEN
-			! Arnoldi iteration has converge
-			EXIT ! exit Arnoldi interation
-		ELSE ! not converge, next iteration
-			TVAL0 = TVAL ! save TVAL to TVAL0
+		! Arnoldi iteration to get effective action of T
+		IF (D > N/2) D = N/2 ! if D too full, cut to half
+		CALL ARNOLDI(A,N,V,D,TS%VALS,LINDS,RINDS)
+		! now TS is represented as A(:D,:D) by V(:,:D)
+		A0 = A
+		! Schur decomposition
+		CALL SCHUR(A(:D,:D),VS)
+		! now A -> V*A*VS^H
+		DS = SIZE(VS,2) ! get Schur cutoff dimension
+		! update Krylov subspace
+		V(:,:DS) = MATMUL(V(:,:D),VS)
+		PRINT '(100F12.8)', DIAGONAL(A(:4,:4))
+		! get mode ordering according to large power of A
+		ORDS = GET_ORDS(A(:DS,:DS)) ! ordering without zeros
+		! now A(ORDS,ORDS) is the density matrix kernel
+		! and V(:,ORDS) holds the basis
+		D = SIZE(ORDS)      ! rec num of modes
+		V(:,:D) = V(:,ORDS) ! move these modes to the front
+		IF (ABS(FID - Z1)< TOL) THEN
+			! error less than tol, converged
+			TVAL = A(1,1) ! return max eigen val
+			EXIT ! exit do
 		END IF
-	END DO ! next Arnoldi interation
-	! if exceed max iteration
-	IF (ITER > MAX_ITER) THEN !then power iteration has not converge
-		WRITE (*,'(A)') 'ANNEAL::fcov: Arnoldi iteration failed to converge.'
-	END IF
+	END DO ! next Arnoldi iteration
+	IF (ITER > MAX_ITER) WRITE(*,'(A)')'ANNEAL2::fcnv: Arnoldi iteration fails to converge, the returned subspace may not be accurate.'
+	! now V(:,:D) contains the converged subspace
+	! and A(ORDS,ORDS) is the density matrix kernel
+	PRINT '(A,I2)', 'D = ', D
 	! reconstruct W tensor for output
 	W%INDS = [(I,I=0,DIM-1)]
 	W%VALS = V(:,1)
 END FUNCTION ANNEAL0
-! by calling to LAPACK and ARPACK (slower, robust)
-FUNCTION ANNEAL1(TS, W) RESULT (TVAL)
-	USE CONST
-	TYPE(TENSOR), INTENT(IN) :: TS
-	TYPE(TENSOR), INTENT(INOUT) :: W
-	COMPLEX :: TVAL
-	! parameters
-    CHARACTER(*),PARAMETER :: BMAT = 'I'    ! regular eigen problem
-    CHARACTER(*),PARAMETER :: WHICH = 'LM'  ! largest magnitude mode
-    CHARACTER(*),PARAMETER :: HOWMNY = 'A'  ! get Ritz eigen vecs
-    LOGICAL, PARAMETER     :: RVEC = .TRUE. ! calculate eigen vecs
-    INTEGER, PARAMETER :: MAXITER = 300 ! max Arnoldi iterations
-    REAL, PARAMETER    :: TOL = 1.D-12 ! tolerance
-    INTEGER, PARAMETER :: NCV = 16 ! Krylov vector space dim
-    INTEGER, PARAMETER :: NEV = 6  ! num of eigenvalues to be compute
-    INTEGER, PARAMETER :: LWORKL = 3*NCV**2 + 5*NCV
+! get orderings of modes, according to large power of A
+FUNCTION GET_ORDS(A) RESULT(ORDS)
+! input: A - Schur matrix
+! output: ORDS - orderings (without zeros)
+	USE CONST ! Z0
+	USE MODEL ! CIR
+	USE MATH
+	COMPLEX, INTENT(IN) :: A(:,:)
+	INTEGER, ALLOCATABLE :: ORDS(:)
 	! local variables
-	INTEGER :: NCALL ! num of calls of TS*W by ARPACK
-	CHARACTER, PARAMETER :: BACK(20) = CHAR(8)
-	! tensor related
-	INTEGER :: I, P ! iterator/index
-	INTEGER, ALLOCATABLE :: LINDS(:), RINDS(:), WINDS(:) ! inds to collect
-	INTEGER :: N ! Hilbert space dim
-	COMPLEX, ALLOCATABLE :: D(:)   ! eigen values
-	COMPLEX, ALLOCATABLE :: Z(:,:) ! eigen vectors
-	COMPLEX, ALLOCATABLE :: A(:,:) ! mat rep of TS
-	! ARPACK related
-	INTEGER :: IDO, INFO ! communication/information flag
-	INTEGER :: NCONV  ! num of converged eigen vals
-	INTEGER :: IPARAM(11), IPNTR(14) ! used by ARPACK
-	COMPLEX :: SIGMA  ! shift, not referenced
-	LOGICAL, ALLOCATABLE :: SEL(:) ! eigen vect selection
-	REAL,    ALLOCATABLE :: RWORK(:) ! work space
-	COMPLEX, ALLOCATABLE :: RESID(:) ! residual vect (to put initial vect)
-	COMPLEX, ALLOCATABLE :: V(:,:)   ! Arnoldi basis vectors
-	COMPLEX, ALLOCATABLE :: WORKL(:), WORKEV(:) ! work spaces
-	COMPLEX, ALLOCATABLE, TARGET :: WORKD(:) ! work space
-	COMPLEX, POINTER :: W0(:), W1(:) ! pointer to WORKD
+	COMPLEX, ALLOCATABLE :: B(:,:)
+	REAL, ALLOCATABLE :: C(:), C0
+	INTEGER :: I, N
+	REAL, PARAMETER :: TOL = 1.E-12
 	
-	! cal total dim of W
-	N = PRODUCT(W%DIMS) ! this will be the Hilbert space dim
-	IF (N <= NCV) THEN ! for small scale problem
-		! call LAPACK directly
-		! unpack data from TS
-		A = TEN2MAT(TS,[1,3,5,7],[2,4,6,8])
-		IF (.NOT.(SIZE(A,1) == N .AND. SIZE(A,2) == N)) THEN
-			WRITE (*,'(A)') 'ANNEAL::xdim: incompatible dimension between TS and W.'
-			STOP
-		END IF
-		! allocate for work space
-		ALLOCATE(D(N), Z(N,N), WORKD(65*N), RWORK(2*N))
-		! call LAPACK to diagonalize A
-		CALL ZGEEV('N','V', N, A, N, D, Z, 1, Z, N, WORKD,&
-			65*N, RWORK, INFO)
-		IF (INFO /= 0) THEN ! error handling
-			IF (INFO > 0) THEN
-				WRITE (*,'(A)') 'ANNEAL::fcnv: the QR algorithm failed.'
-			ELSE
-				WRITE (*,'(A,I3)') 'ANNEAL::xinf: ZGEEV error ', INFO
-			END IF
-		END IF
-		! now D holds the eigen vals, and Z the eigen vects
-		! find the max abs eigen val
-		P = LOC_MAX_MODE(D)
-	ELSE ! for large scale problem
-		! call ARPACK
-		! allocate for work space
-		ALLOCATE(D(NCV), Z(N,NEV), RESID(N), V(N,NCV), WORKD(3*N),&
-			WORKL(LWORKL), WORKEV(3*NCV), RWORK(NCV), SEL(NCV), STAT = INFO)
-		! collect leg-combined inds in TS and W (remember to +1)
-		LINDS = COLLECT_INDS(TS,[1,3,5,7])+1
-		RINDS = COLLECT_INDS(TS,[2,4,6,8])+1
-		WINDS = COLLECT_INDS(W,[1,2,3,4])+1
-		! unpack initial vect from W tensor input
-		RESID = Z0 ! clear
-		FORALL (I = 1:SIZE(W%INDS))
-			RESID(WINDS(I)) = W%VALS(I) ! dump
-		END FORALL
-		RESID = RESID/SQRT(DOT_PRODUCT(RESID,RESID)) ! normalize
-		! set ARPACK parameters
-		IPARAM(1) = 1       ! ishift
-		IPARAM(3) = MAXITER ! maxitr
-		IPARAM(7) = 1       ! model 1: A*x = lambda*x
-		! now it is ready to start Arnoldi iteration
-		IDO  = 0 ! initialize communication flag
-		INFO = 1 ! RESID contains the initial residual vector
-		! call ARPACK ----------------------
-		! main loop (reverse communication)
-		NCALL = 0
-		WRITE (6,'(A,I5,A)',ADVANCE = 'NO') 'dim:',N,', iter:'
-		DO WHILE (.TRUE.) ! repeatedly call ZNAUPD
-			! until converge or exceed MAXITER
-			CALL ZNAUPD(IDO, BMAT, N, WHICH, NEV, TOL, RESID, NCV, &
-				V, N, IPARAM, IPNTR, WORKD, WORKL, LWORKL, RWORK, INFO)
-			! take action according to communication flag IDO
-			SELECT CASE (IDO)
-				CASE (-1,1) ! compute W1 = TS*W0
-					! monitor each call
-					NCALL = NCALL +1 ! NCALL inc
-					WRITE (6,'(I4)',ADVANCE = 'NO') NCALL
-					! perform action of TS to W0 -> W1
-					! point W0, W1 to the correct part of WORKD
-					W0 => WORKD(IPNTR(1):IPNTR(1)+N-1)
-					W1 => WORKD(IPNTR(2):IPNTR(2)+N-1)
-					! carry out sparse matrix multiplication
-					W1 = Z0 ! clear
-					DO I = 1,SIZE(TS%INDS)
-						W1(LINDS(I)) = W1(LINDS(I)) + TS%VALS(I)*W0(RINDS(I))
-					END DO
-					! monitor back space
-					WRITE (6,'(4A1)',ADVANCE = 'NO') BACK(1:4)
-				CASE (99) ! done
-					EXIT ! exit Arnoldi iteration
-			END SELECT
-		END DO
-		! clear the monitor
-		WRITE (6,'(20A1)',ADVANCE = 'NO') BACK
-		! Either we have convergence or there is an error    
-		IF (INFO /= 0) THEN ! error handling
-			SELECT CASE (INFO)
-				CASE (1)
-					WRITE (*,'(A)') 'ANNEAL::fcnv: Arnoldi iteration failed to converge.'
-				CASE (3)
-					WRITE (*,'(A)') 'ANNEAL::xsft: no shift can be applied, try larger NCV.'        	
-				CASE DEFAULT
-					WRITE (*,'(A,I3)') 'ANNEAL::xinf: ZNAUPD error ', INFO
-					STOP
-			END SELECT
-		ELSE
-			! No fatal errors occurred.
-			! Post-Process using ZNEUPD.
-			CALL ZNEUPD(RVEC, HOWMNY, SEL, D, Z, N, SIGMA, WORKEV, &
-				BMAT, N, WHICH, NEV, TOL, RESID, NCV, V, N, IPARAM, &
-				IPNTR, WORKD, WORKL, LWORKL, RWORK, INFO)
-			IF (INFO /=0 ) THEN ! error handling
-				WRITE (*,'(A,I3)') 'ANNEAL::xinf: ZNEUPD error ', INFO
-				STOP
-			END IF
-			NCONV = IPARAM(5) ! get the num of convergent modes
-		END IF
-		! now D(:NCONV) holds the eigen vals
-		! and Z(:,:NCONV) the eigen vects
-		! find the max abs eigen val
-		P = LOC_MAX_MODE(D(1:NCONV)) ! get position
-	END IF
-	! prepare output
-	TVAL = D(P) ! output eigen val as TVAL
-	! reconstruct W tensor from the corresponding mode
-	W%INDS = [(I,I=0,N-1)] ! make index
-	W%VALS = Z(:,P) ! dump data
-END FUNCTION ANNEAL1
-! locate max mode from eigen values
-FUNCTION LOC_MAX_MODE(D) RESULT (P)
-! input: D - eigen values of TS
-! output: P - position where the max mode is located
-	COMPLEX, INTENT(IN) :: D(:)
-	INTEGER :: P
-	! local variables
-	INTEGER :: I
-	COMPLEX :: LGDP, LGDI
-	COMPLEX, ALLOCATABLE :: LGD(:)
-	REAL, PARAMETER :: TOL = 1.E-7 ! allowed relative error
-	
-	! take log of D
-	LGD = LOG(D)
-	! assuming  P at the beginning
-	P = 1
-	LGDP = LGD(P) ! record the in-hand lgD
-	! start searching for better choice
-	DO I = 2, SIZE(D)
-		LGDI = LGD(I) ! get the current lgD
-		! compare with the one in hand
-		IF (REAL(LGDI) > REAL(LGDP)+TOL) THEN
-			! lgD(I) > lgD(P)
-			P = I ! catch I
-			LGDP = LGD(P) ! record in-hand
-		ELSEIF (REAL(LGDI) > REAL(LGDP)-TOL) THEN
-			! lgD(I) ~ lgD(P) (degenerated in magnitude)
-			IF (ABS(IMAG(LGDI)) < ABS(IMAG(LGDP)) - TOL) THEN
-				! |phase of I| < |phase of P|, D(I) is more real
-				P = I ! catch I
-				LGDP = LGD(P) ! record in-hand
-			ELSEIF (ABS(IMAG(LGDI)) < ABS(IMAG(LGDP))+TOL) THEN
-				! |phase of I| ~ |phase of P| (phase degenerated)
-				IF (IMAG(LGDI) > IMAG(LGDP)) THEN
-					! choose the positive one
-					P = I ! catch I
-					LGDP = LGD(P) ! record in-hand
-				END IF
-			END IF
-		END IF
-	END DO
-END FUNCTION LOC_MAX_MODE
+	! put down Schur matrix, with normalization
+	B = A/A(1,1)
+	! power by CIR
+	B = MATPOWER(B, CIR)
+	! get abs diagonal of B 
+	C = ABS(DIAGONAL(B))
+	! scaled by the max val
+	C0 = MAXVAL(C)
+	IF (C0 > 1) C = C/C0
+	! now ready to order
+	ORDS = D_ORDERING(C) ! get ordering
+	ORDS = PACK(ORDS, C(ORDS) > TOL) ! exclude zeros from the pick
+	! now C(ORDS) returns in descending order without zeros
+END FUNCTION GET_ORDS
 ! ----------- Measure -----------
 ! measure operators O's on MPS X
 FUNCTION MEASURE(WS, OS) RESULT (M)
@@ -1010,10 +1169,26 @@ SUBROUTINE TEST()
 	USE DATAPOOL
 	
 	CALL DAT_ALLOCATE()
-	CALL DAT_ASSOCIATE('I')
 	CALL SET_MPO()
-	PRINT *, SIZE(TA%VALS)
+	DO L = 1, LEN/2
+		CALL DMRG_STEP('I')
+	END DO
+!	CALL TEN_SAVE('TS',TS_OUT)
+
+!	TYPE(TENSOR) :: TS	
+	
 END SUBROUTINE TEST
+! test order
+SUBROUTINE TEST_ORD()
+	USE MATH
+	REAL :: F(5) = [0.,2.,3.,1.,1.01]
+	INTEGER, ALLOCATABLE :: X(:)
+	
+	X = D_ORDERING(F)
+	X = PACK(X,F(X)>0.01)
+	PRINT '(100I6)', X
+	PRINT '(100F6.2)', F(X)
+END SUBROUTINE TEST_ORD
 ! test DMRG
 SUBROUTINE TEST_DMRG()
 	USE MODEL
@@ -1099,8 +1274,9 @@ PROGRAM MAIN
 	INTEGER :: I
 	PRINT *, '------------ DMRG -------------'
 
-!	CALL TEST()
-	CALL TEST_DMRG()
+	CALL TEST()
+!	CALL TEST_ORD()
+!	CALL TEST_DMRG()
 !	CALL TEST_MEASURE()
 !	CALL TEST_TRANSF()
 !	CALL COLLECT([0.4406])
