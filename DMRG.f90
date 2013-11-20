@@ -10,15 +10,58 @@ MODULE MODEL
 	USE CONST
 	REAL    :: THETA = 0.*PI ! theta-term
 	REAL    :: CROSS = 1.    ! crossing: 1. = allow, 0. = avoid
-	REAL    :: BETA = 0.     ! inverse temperature
-	INTEGER :: LEN = 100 
-	INTEGER :: MAX_CUT = 12  ! 16
+	REAL    :: BETA = 0.440687    ! inverse temperature 0.440687
+	INTEGER :: LEN = 20 
+	INTEGER :: MAX_CUT = 8  ! 16
 	REAL    :: MAX_ERR = 0.
 	INTEGER :: SWEEPS = 1
 END MODULE MODEL
-! ############## PHYSICS ###################
-MODULE PHYSICS
+! ################ MATH ################### 
+MODULE MATH
 	USE TENSORIAL
+	! definition of huge tensor
+	TYPE HUGE_TENSOR
+		TYPE(TENSOR) :: TEN ! tensor content
+		REAL :: LEV ! scale by EXP(LEV)
+	END TYPE HUGE_TENSOR
+CONTAINS
+! rescale huge tensor
+SUBROUTINE RESCALE(A)
+! inout: A - huge tensor to be rescaled (in place)
+	TYPE(HUGE_TENSOR), INTENT(INOUT) :: A
+	! local variables
+	REAL :: R ! rescale ratio
+	
+	R = SCALE(A%TEN%VALS) ! get the scale
+	IF (R > 0.) THEN
+		A%TEN%VALS = A%TEN%VALS/R ! rescale the vals
+		A%LEV = A%LEV + LOG(R) ! update the lev
+	END IF
+END SUBROUTINE RESCALE
+! cal binomial
+FUNCTION BINOMIAL(L, K) RESULT(N)
+! N = L!/(L-K)!K!
+	INTEGER, INTENT(IN) :: L, K
+	INTEGER :: N
+	! local variable
+	INTEGER :: I, M
+	
+	! check validity
+	IF (L < K) THEN ! if L < K, ill defined
+		N = 0 ! set N = 0 and return
+		RETURN
+	END IF
+	! now L >= K
+	N = 1 ! initialize
+	M = MIN(K, L-K) ! see which is smaller 
+	DO I = 1, M ! run over M
+		N = N*(L-I+1)/I ! cal binomial product
+	END DO
+END FUNCTION BINOMIAL
+! end of module MATH
+END MODULE MATH
+! ############## DATAPOOL #################
+MODULE DATAPOOL
 ! tensor conventions
 ! MPO (by default B-type):
 !   A-type       B-type
@@ -32,16 +75,80 @@ MODULE PHYSICS
 !     │            │
 !     2            2
 ! ─ 1 A 3 ─    ─ 3 B 1 ─
+	USE MODEL
+	USE MATH
+	! indices
+	INTEGER :: L
+	! tensors
+	TYPE(TENSOR), POINTER :: TA, TB ! site-MPO
+	TYPE(TENSOR), POINTER :: WA(:), WB(:) ! MPS
+	TYPE(HUGE_TENSOR), POINTER :: DA(:), DB(:) ! block-MPO
+	TYPE(TENSOR) :: P ! Schmidt tensor
+	! variables
+	REAL :: F ! free energy
+	! private data storages (only assessable through pointers)
+	TYPE(TENSOR), TARGET, PRIVATE :: T(2)
+	TYPE(TENSOR), TARGET, ALLOCATABLE, PRIVATE :: W(:)
+	TYPE(HUGE_TENSOR), TARGET, ALLOCATABLE, PRIVATE :: D(:)
+CONTAINS
+! allocate space for datapool
+SUBROUTINE DAT_ALLOCATE()
+	! allocation control
+	INTEGER, SAVE :: LEN0 = 0
+	
+	! check validity of system size LEN
+	IF (MODULO(LEN,2) == 1 .OR. LEN < 4) THEN
+		WRITE (*,'(A)') 'DAT_ALLOCATE::xlen: LEN must be even and greater than 4.'
+		STOP
+	END IF
+	! now LEN is valid, compare with LEN0
+	IF (LEN /= LEN0) THEN ! if size changed
+		IF (ALLOCATED(W)) DEALLOCATE (W) ! try deallocate
+		ALLOCATE(W(2*LEN)) ! reallocate new size
+		IF (ALLOCATED(D)) DEALLOCATE (D) ! try deallocate
+		ALLOCATE(D(2*LEN)) ! reallocate new size
+		LEN0 = LEN ! keep the current size
+	END IF
+	! make initial association
+	CALL DAT_ASSOCIATE('I')
+END SUBROUTINE DAT_ALLOCATE
+! set pointers to data blocks
+SUBROUTINE DAT_ASSOCIATE(MODE)
+! input: MODE - DMRG mode: 'I' - initial, 'F' - forward, 'B' - backward
+	CHARACTER, INTENT(IN) :: MODE
+	
+	SELECT CASE(MODE)
+		CASE ('I','F') ! initial or forward
+			TA => T(1)
+			TB => T(2)
+			WA => W(:LEN)
+			WB => W(LEN+1:)
+			DA => D(:LEN)
+			DB => D(LEN+1:)
+		CASE ('B') ! backward
+			TA => T(2)
+			TB => T(1)
+			WA => W(LEN+1:)
+			WB => W(:LEN)
+			DA => D(LEN+1:)			
+			DB => D(:LEN)
+	END SELECT
+END SUBROUTINE DAT_ASSOCIATE
+! end of module DATAPOOL
+END MODULE DATAPOOL
+! ############## PHYSICS ###################
+MODULE PHYSICS
+	USE TENSORIAL
 CONTAINS
 ! ------------ set MPO tensor ---------------
 ! square lattice MPO
-SUBROUTINE SET_MPO(TB)
-! output: TB - MPO tensor (by default B-type)
-	USE MODEL
-	TYPE(TENSOR), INTENT(OUT) :: TB ! MPO tensor output
+SUBROUTINE SET_MPO()
+! data transfered by DATAPOOL
+! DATAPOOL: TA, TB. MODEL: THETA, BETA, CROSS
+! * DATAPOOL must be initiated before calling me
+	USE DATAPOOL
 	! local variables
-	TYPE(TENSOR) :: X, Y, U, S
-	COMPLEX, ALLOCATABLE :: WA(:,:)
+	TYPE(TENSOR) :: X, Y, U, UA, UB, S
 	COMPLEX :: Q, B
 	
 ! ++++++++ set the vertex tensor here ++++++++
@@ -58,66 +165,62 @@ SUBROUTINE SET_MPO(TB)
 	! contract U from both sides with Y
 	U = TEN_PROD(U,Y,[3],[3])
 	TB = TEN_TRANS(TEN_PROD(U,U,[2,4],[4,2]),[1,3,2,4])
-END SUBROUTINE SET_MPO
-! ----------- DMRG -----------
-! DMRG controlling routine
-SUBROUTINE DMRG(TB, WA)
-! input: T - MPO site tensor
-! output: WA - MPS tensor
-	USE MODEL
-	TYPE(TENSOR), INTENT(IN)  :: TB
-	TYPE(TENSOR), INTENT(OUT) :: WA(LEN)
-	! local tensor
-	TYPE(TENSOR) :: TA, WB(LEN), DA(LEN), DB(LEN), P
-	! local variables
-	INTEGER :: L, ITER
-	COMPLEX :: F, FA(LEN), FB(LEN)
-	
-	! check validity of system size LEN
-	IF (MODULO(LEN,2) == 1 .OR. LEN < 4) THEN
-		WRITE (*,'(A)') 'DMRG::xlen: LEN must be even and greater than 4.'
-		STOP
-	END IF
 	! set TA from TB MPO
 	TA = TEN_TRANS(TB,[2,1,3,4]) ! given by 1 <-> 2
+END SUBROUTINE SET_MPO
+! ----------- DMRG kernel -----------
+! DMRG controlling routine
+SUBROUTINE DMRG()
+! data transfered by DATAPOOL
+! DATAPOOL: L. MODEL: LEN, SWEEPS
+	USE DATAPOOL
+	! local variables
+	INTEGER :: ITER
+	
+	CALL DAT_ALLOCATE() ! allocate data pool
+	CALL SET_MPO() ! set MPO tensors
 	! iDMRG (warm up)
 	DO L = 1, LEN/2
-		CALL IDMRG(L, TA, TB, DA, DB, FA, FB, WA, WB, P, F)
-		CALL SHOW_DMRG_STATUS('I',L,F,P)
+		CALL DMRG_STEP('I')
 	END DO
 	! fDMRG (first sweep)
 	DO L = LEN/2+1, LEN
-		CALL FDMRG(L, TA, TB, DA, DB, FA, FB, WA, WB, P, F)
-		CALL SHOW_DMRG_STATUS('F',L,F,P)
+		CALL DMRG_STEP('F')
 	END DO
 	! fDMRG sweeps
 	DO ITER = 1, SWEEPS
 		! fFDMRG (backward sweep)
 		DO L = 1, LEN
-			CALL FDMRG(L, TB, TA, DB, DA, FB, FA, WB, WA, P, F)
-			CALL SHOW_DMRG_STATUS('B',L,F,P)
+			CALL DMRG_STEP('B')
 		END DO
-		! fFDMRG (forward sweep)
+		! fDMRG (forward sweep)
 		DO L = 1, LEN
-			CALL FDMRG(L, TA, TB, DA, DB, FA, FB, WA, WB, P, F)
-			CALL SHOW_DMRG_STATUS('F',L,F,P)
+			CALL DMRG_STEP('F')
 		END DO
 	END DO
 END SUBROUTINE DMRG
+! make one DMRG step
+SUBROUTINE DMRG_STEP(MODE)
+! input: MODE - DMRG mode: 'I' - initial, 'F' - forward, 'B' - backward
+	USE DATAPOOL ! for DAT_ASSOCIATE
+	CHARACTER, INTENT(IN) :: MODE
+	
+	CALL DAT_ASSOCIATE(MODE)
+	SELECT CASE(MODE)
+		CASE ('I')
+			CALL IDMRG()
+		CASE ('F','B')
+			CALL FDMRG()
+	END SELECT
+	CALL SHOW_DMRG_STATUS(MODE)
+END SUBROUTINE DMRG_STEP
 ! infinite-size DMRG step
-SUBROUTINE IDMRG(L, TA, TB, DA, DB, FA, FB, WA, WB, P, F)
-! perform one step of iDMRG at L
-! input: L - lattice position
-!        TA,TB - MPO
-!        DA, DB - block MPO, FA, FB - level of block MPO
-!        WA, WB - MPS, P - Schmidt spectrum 
-!        F - free energy
-! inout: DA, DB, WA, WB, S0, S will be updated
-	USE MODEL
-	INTEGER, INTENT(IN)      :: L
-	TYPE(TENSOR), INTENT(IN) :: TA, TB
-	TYPE(TENSOR), INTENT(INOUT) :: DA(:), DB(:), WA(:), WB(:), P
-	COMPLEX, INTENT(INOUT) :: F, FA(:), FB(:)
+SUBROUTINE IDMRG()
+! perform one step of iDMRG
+! data transfered by DATAPOOL
+! DATAPOOL: TA, TB, WA, WB, DA, DB, P. MODEL: MAX_CUT, MAX_ERR
+! on exit DA, DB, WA, WB, P0, P will be updated
+	USE DATAPOOL
 	! local tensors
 	TYPE(TENSOR) :: W, TS
 	TYPE(TENSOR), SAVE :: P0
@@ -137,88 +240,88 @@ SUBROUTINE IDMRG(L, TA, TB, DA, DB, FA, FB, WA, WB, P, F)
 		! initial MPS transfers d.o.f. from leg 2 to 3, with leg 1 dummy
 		WA(1) = TEN_PROD(TENSOR([1],[0],[Z1]),EYE_TEN([DPHY,DPHY]))
 		WB(1) = WA(1) ! WB is the same as WA
-		F = Z0 ! set an initial F
+		F = 0. ! set an initial F
 		! set initial block MPO (and rescale)
-		DA(1) = TA
-		DB(1) = TB
-		CALL RESCALE(DA(1), Z0, FA(1))
-		CALL RESCALE(DB(1), Z0, FB(1))
+		DA(1)%TEN = TA
+		DA(1)%LEV = 0.
+		DB(1)%TEN = TB
+		DB(1)%LEV = 0.
+		CALL RESCALE(DA(1))
+		CALL RESCALE(DB(1))
 	ELSE ! L >= 2
 		! estimate trial W
 		P0%VALS = Z1/P0%VALS ! cal P0^(-1) -> P0
 		W = MAKE_W5(WA(L-1), WB(L-1), P, P0)
 		P0 = P ! P0 is used, update to P
-		TS = MAKE_TS(TA, TB, DA(L-1), DB(L-1)) ! construct TS
+		TS = MAKE_TS(TA, TB, DA(L-1)%TEN, DB(L-1)%TEN) ! construct TS
 		TVAL = ANNEAL(TS, W) ! anneal W by TS
-		F = FA(L-1)+FB(L-1)+LOG(TVAL) ! calculate F
+		F = DA(L-1)%LEV+DB(L-1)%LEV+LOG(ABS(TVAL)) ! calculate F
 		! SVD split W, and update WA, WB, P
 		CALL SVD(W,[1,2],[3,4],WA(L),WB(L),P,MAX_CUT,MAX_ERR)
 		! update DA, DB and rescale
-		DA(L) = NEW_DX(TA, WA(L), DA(L-1))
-		DB(L) = NEW_DX(TB, WB(L), DB(L-1))
-		CALL RESCALE(DA(L), FA(L-1), FA(L))
-		CALL RESCALE(DB(L), FB(L-1), FB(L))
+		DA(L)%TEN = NEW_DX(TA, WA(L), DA(L-1)%TEN)
+		DA(L)%LEV = DA(L-1)%LEV
+		DB(L)%TEN = NEW_DX(TB, WB(L), DB(L-1)%TEN)
+		DB(L)%LEV = DB(L-1)%LEV
+		CALL RESCALE(DA(L))
+		CALL RESCALE(DB(L))
 	END IF
 END SUBROUTINE IDMRG
 ! finite-size DMRG step (forward convention)
-SUBROUTINE FDMRG(L, TA, TB, DA, DB, FA, FB, WA, WB, P, F)
-! perform one step of fDMRG at L (forward dirction)
-! input: L - lattice position
-!        TA,TB - MPO
-!        DA, DB - block MPO, LA, LB - level of block MPO
-!        WA, WB - MPS, P - Schmidt spectrum 
-!        F - free energy
-! inout: DA, WA, S will be updated
-! on output: DB is not touched, WB is destroyed
-	USE MODEL
-	INTEGER, INTENT(IN)      :: L
-	TYPE(TENSOR), INTENT(IN) :: TA, TB
-	TYPE(TENSOR), INTENT(INOUT) :: DA(:), DB(:), WA(:), WB(:), P
-	COMPLEX, INTENT(INOUT) :: F, FA(:), FB(:)
+SUBROUTINE FDMRG()
+! perform one step of fDMRG (forward convention)
+! data transfered by DATAPOOL
+! DATAPOOL: TA, TB, WA, WB, DA, P. MODEL: LEN, MAX_CUT, MAX_ERR
+! on exit DA, WA, P will be updated, DB not touched, WB destroyed
+	USE DATAPOOL
 	! local tensors
 	TYPE(TENSOR) :: W, TS
 	COMPLEX :: TVAL
-	COMPLEX, SAVE :: F0
+	REAL, SAVE :: F0
 
 	IF (L == 1) THEN
 		! WA(1), no update, obtained from the last sweep
 		! update DA, to restart
 		! SSB treatment to be implemented here
-		DA(1) = NEW_DX(TA, WA(1))
-		CALL RESCALE(DA(1), Z0, FA(1)) ! rescale
+		DA(1)%TEN = NEW_DX(TA, WA(1))
+		DA(1)%LEV = 0.
+		CALL RESCALE(DA(1)) ! rescale
 		F = F0 ! retrieve F from last save
 	ELSEIF (L == LEN-1) THEN
-		! estimate trial W
-		W = MAKE_W3(P, WB(2), WB(1))
-		TS = MAKE_TS(TA, TB, DA(LEN-2)) ! construct TS (boundary)
+		W = MAKE_W3(P, WB(2), WB(1)) ! estimate trial W
+		TS = MAKE_TS(TA, TB, DA(LEN-2)%TEN) ! construct TS (boundary)
 		TVAL = ANNEAL(TS, W) ! anneal W by TS
-		F = FA(LEN-2)+LOG(TVAL) ! calculate F
+		F = DA(LEN-2)%LEV+LOG(ABS(TVAL)) ! calculate F
 		F0 = F ! save F at the last site
 		! SVD split W, update WA, P
 		CALL SVD(W,[1,2],[3,4],WA(LEN-1),WB(1),P,MAX_CUT,MAX_ERR)
 		! update DA and rescale
-		DA(LEN-1) = NEW_DX(TA, WA(LEN-1), DA(LEN-2))
-		CALL RESCALE(DA(LEN-1), FA(LEN-2), FA(LEN-1))
+		DA(LEN-1)%TEN = NEW_DX(TA, WA(LEN-1), DA(LEN-2)%TEN)
+		DA(LEN-1)%LEV = DA(LEN-2)%LEV
+		CALL RESCALE(DA(LEN-1))
 	ELSEIF (L == LEN) THEN
 		! update the ending WA by P*WB
 		WA(LEN) = TEN_TRANS(TEN_PROD(P,WB(1),[2],[3]),[1,3,2])
 		! update DA and rescale
-		DA(LEN) = NEW_DX(TA, WA(LEN), DA(LEN-1))
-		CALL RESCALE(DA(LEN), FA(LEN-1), FA(LEN))
-		F = FA(LEN) ! return F for the whole lattice
+		DA(LEN)%TEN = NEW_DX(TA, WA(LEN), DA(LEN-1)%TEN)
+		DA(LEN)%LEV = DA(LEN-1)%LEV
+		CALL RESCALE(DA(LEN))
+		! return F for the whole lattice
+		F = DA(LEN)%LEV + LOG(ABS(ZVAL(TEN_TRACE(DA(LEN)%TEN,[1,3],[2,4]))))
 	ELSE ! 2 <= L <= LEN-2
-		! estimate trial W
-		W = MAKE_W3(P, WB(LEN-L+1), WB(LEN-L))
-		TS = MAKE_TS(TA, TB, DA(L-1), DB(LEN-L-1)) ! construct TS
+		W = MAKE_W3(P, WB(LEN-L+1), WB(LEN-L)) ! estimate trial W
+		TS = MAKE_TS(TA, TB, DA(L-1)%TEN, DB(LEN-L-1)%TEN) ! construct TS
 		TVAL = ANNEAL(TS, W) ! anneal W by TS
-		F = FA(L-1)+FB(LEN-L-1)+LOG(TVAL) ! calculate F
+		F = DA(L-1)%LEV+DB(LEN-L-1)%LEV+LOG(ABS(TVAL)) ! calculate F
 		! SVD split W, update WA, P
 		CALL SVD(W,[1,2],[3,4],WA(L),WB(LEN-L),P,MAX_CUT,MAX_ERR)
 		! update DA and rescale
-		DA(L) = NEW_DX(TA, WA(L), DA(L-1))
-		CALL RESCALE(DA(L), FA(L-1), FA(L))
+		DA(L)%TEN = NEW_DX(TA, WA(L), DA(L-1)%TEN)
+		DA(L)%LEV = DA(L-1)%LEV
+		CALL RESCALE(DA(L))
 	END IF
 END SUBROUTINE FDMRG
+! --------- tensor makers ---------
 ! estimate iDMG trial state
 FUNCTION MAKE_W5(WA, WB, P, PI) RESULT(W)
 ! call by IDMRG
@@ -314,38 +417,6 @@ FUNCTION NEW_DX(TX, WX, DX) RESULT (DX1)
 		DX1 = TEN_FLATTEN(TEN_PROD(TEN_PROD(TX,TEN_CONJG(WX),[3],[2]),WX,[3],[2]), [1,0,2,3,5,0,4,0,6])
 	END IF
 END FUNCTION NEW_DX
-! rescale DX
-SUBROUTINE RESCALE(DX, FX0, FX)
-! input: DX - unscaled block MPO, FX0 - last level
-! output: DX - scaled block MPO, FX - this scaling level
-	USE CONST
-	TYPE(TENSOR), INTENT(INOUT) :: DX
-	COMPLEX, INTENT(IN)  :: FX0
-	COMPLEX, INTENT(OUT) :: FX
-	! local variables
-	COMPLEX :: Z
-	
-	! get the scale of D by evaluation
-	Z = EVALUATE(DX)
-	IF (ABS(Z) /= 0.) THEN
-		! rescale by a factor of Z
-		DX%VALS = DX%VALS/Z
-		! use it to calculate new level
-		FX = FX0 + LOG(Z)
-	END IF
-END SUBROUTINE RESCALE
-! cal entanglement entropy
-FUNCTION ENTROPY(P) RESULT (S)
-! input: P - Schmidt spectrum
-! update: S - entanglement entropy
-	TYPE(TENSOR), INTENT(IN) :: P
-	REAL :: S
-	! local variables
-	REAL, ALLOCATABLE :: EVALS(:)
-	
-	EVALS = REALPART(P%VALS)**2
-	S = -SUM(EVALS*LOG(EVALS))
-END FUNCTION ENTROPY
 ! ----------- Solvers ------------
 ! anneal the state W to the ground state of TS
 FUNCTION ANNEAL(TS, W) RESULT (TVAL)
@@ -652,6 +723,7 @@ FUNCTION MEASURE(WS, OS) RESULT (M)
 ! M is output in terms of a tensor:
 ! leg <-> operator, index on leg <-> position of operator 
 	USE MODEL
+	USE MATH
 	TYPE(TENSOR), INTENT(IN) :: WS(:), OS(:)
 	TYPE(TENSOR) :: M
 	! local tensors
@@ -808,8 +880,6 @@ FUNCTION EVALUATE(E) RESULT(Z)
 	USE CONST
 	TYPE(TENSOR), INTENT(IN) :: E
 	COMPLEX :: Z
-	! local tensor
-	TYPE(TENSOR) :: E0
 	
 	! trace out the legs of E
 	!  ╭───╮
@@ -818,47 +888,14 @@ FUNCTION EVALUATE(E) RESULT(Z)
 	! ││   4   │
 	! │╰───╯   │
 	! ╰────────╯
-	E0 = TEN_TRACE(E,[1,3],[2,4])
-	! check that E0 is a number
-	IF (SIZE(E0%DIMS) /= 0) THEN
-		WRITE (*,'(A)') 'EVALUATE::xleg: not evaluated to a number.'
-		STOP
-	END IF
-	! prepare output
-	IF (SIZE(E0%VALS) == 0) THEN ! if E0 empty
-		Z = Z0 ! return zero
-	ELSE ! if not empty
-		Z = E0%VALS(1) ! return the value
-	END IF
+	Z = ZVAL(TEN_TRACE(E,[1,3],[2,4]))
 END FUNCTION EVALUATE
-! cal binomial
-FUNCTION BINOMIAL(L, K) RESULT(N)
-! N = L!/(L-K)!K!
-	INTEGER, INTENT(IN) :: L, K
-	INTEGER :: N
-	! local variable
-	INTEGER :: I, M
-	
-	! check validity
-	IF (L < K) THEN ! if L < K, ill defined
-		N = 0 ! set N = 0 and return
-		RETURN
-	END IF
-	! now L >= K
-	N = 1 ! initialize
-	M = MIN(K, L-K) ! see which is smaller 
-	DO I = 1, M ! run over M
-		N = N*(L-I+1)/I ! cal binomial product
-	END DO
-END FUNCTION BINOMIAL
 ! ----------- Debug ------------
 ! show status after DMRG step
-SUBROUTINE SHOW_DMRG_STATUS(MODE,L,F,P)
+SUBROUTINE SHOW_DMRG_STATUS(MODE)
 	USE MODEL
+	USE DATAPOOL
 	CHARACTER, INTENT(IN) :: MODE
-	INTEGER, INTENT(IN) :: L
-	COMPLEX, INTENT(IN) :: F
-	TYPE(TENSOR), INTENT(IN) :: P
 	! local variables
 	REAL :: S
 	INTEGER :: I1, I2
@@ -885,8 +922,20 @@ SUBROUTINE SHOW_DMRG_STATUS(MODE,L,F,P)
 	ELSE
 		S = ENTROPY(P)
 	END IF
-	WRITE (*,'(I3,A,I3,A,F10.6,A,F6.3,A,F10.6,A,F5.2,A)') I1,JN,I2,': F = (', REALPART(F),',', IMAGPART(F), '), S = ', S/LOG(2.), 'bit ', SVD_ERR*100,'%'
+	WRITE (*,'(I3,A,I3,A,F10.6,A,F10.6,A,F5.2,A)') I1,JN,I2,': F = ', F, ', S = ', S/LOG(2.), 'bit ', SVD_ERR*100,'%'
 END SUBROUTINE SHOW_DMRG_STATUS
+! cal entanglement entropy
+FUNCTION ENTROPY(P) RESULT (S)
+! input: P - Schmidt spectrum
+! update: S - entanglement entropy
+	TYPE(TENSOR), INTENT(IN) :: P
+	REAL :: S
+	! local variables
+	REAL, ALLOCATABLE :: EVALS(:)
+	
+	EVALS = REALPART(P%VALS)**2
+	S = -SUM(EVALS*LOG(EVALS))
+END FUNCTION ENTROPY
 ! reconstruct wave function
 FUNCTION MPS(WA) RESULT (W)
 ! input: WA - MPS tensors
@@ -929,22 +978,22 @@ SUBROUTINE COLLECT(BETAS)
 	INTEGER :: I, N
 	
 	! prepare observables to be measured
-	DO I = 1,2 ! two operators are both sigma_3
-		OS(I) = PAULI_MAT([3])
-	END DO
-	N = SIZE(BETAS) ! get size of beta list
-	DO I = 1, N ! for each beta in the list
-		BETA = BETAS(I) ! (remember to set beta!!!)
-		CALL SET_MPO(T) ! update MPO, using new beta
-		! prepare to launch DMRG
-		WRITE (*,'(A,I3,A,F5.2,A,F5.2,A,F5.2)') 'cut = ', MAX_CUT, ', theta = ', THETA/PI, '*pi, beta = ', BETA, ', crossing = ', CROSS
-		! launch DMRG to find ground state MPS given MPO
-		CALL DMRG(T, WS)
-		! take measurements on the MPS
-		M = MEASURE(WS, OS)
-		! save result to disk
-		CALL TEN_SAVE('./data center (IS)/M'//FILENAME(),M)
-	END DO 
+!	DO I = 1,2 ! two operators are both sigma_3
+!		OS(I) = PAULI_MAT([3])
+!	END DO
+!	N = SIZE(BETAS) ! get size of beta list
+!	DO I = 1, N ! for each beta in the list
+!		BETA = BETAS(I) ! (remember to set beta!!!)
+!		CALL SET_MPO(T) ! update MPO, using new beta
+!		! prepare to launch DMRG
+!		WRITE (*,'(A,I3,A,F5.2,A,F5.2,A,F5.2)') 'cut = ', MAX_CUT, ', theta = ', THETA/PI, '*pi, beta = ', BETA, ', crossing = ', CROSS
+!		! launch DMRG to find ground state MPS given MPO
+!		CALL DMRG(T, WS)
+!		! take measurements on the MPS
+!		M = MEASURE(WS, OS)
+!		! save result to disk
+!		CALL TEN_SAVE('./data center (IS)/M'//FILENAME(),M)
+!	END DO 
 END SUBROUTINE COLLECT
 ! make filename
 FUNCTION FILENAME()
@@ -958,22 +1007,21 @@ END FUNCTION FILENAME
 ! ------------ Tests -------------
 ! test routine
 SUBROUTINE TEST()
-	TYPE(TENSOR) :: TB
+	USE DATAPOOL
 	
-	CALL SET_MPO(TB)
-	CALL TEN_SAVE('TB',TB)
+	CALL DAT_ALLOCATE()
+	CALL DAT_ASSOCIATE('I')
+	CALL SET_MPO()
+	PRINT *, SIZE(TA%VALS)
 END SUBROUTINE TEST
 ! test DMRG
 SUBROUTINE TEST_DMRG()
-	USE MATHIO
 	USE MODEL
-	TYPE(TENSOR) :: TB, WA(LEN)
 	REAL :: T0, T1
 	
 	WRITE (*,'(A,I3,A,F5.2,A,F5.2,A,F5.2)') 'cut = ', MAX_CUT, ', theta = ', THETA/PI, '*pi, beta = ', BETA, ', crossing = ', CROSS
 	CALL CPU_TIME(T0)
-	CALL SET_MPO(TB)
-	CALL DMRG(TB, WA)
+	CALL DMRG()
 	CALL CPU_TIME(T1)
 	PRINT *, T1-T0
 END SUBROUTINE TEST_DMRG
@@ -986,18 +1034,63 @@ SUBROUTINE TEST_MEASURE()
 	COMPLEX, ALLOCATABLE :: W(:)
 	INTEGER :: I
 	
-	WRITE (*,'(A,I3,A,F5.2,A,F5.2,A,F5.2)') 'cut = ', MAX_CUT, ', theta = ', THETA/PI, '*pi, beta = ', BETA, ', crossing = ', CROSS
-	CALL SET_MPO(TB)
-	CALL DMRG(TB, WA)
-	DO I = 1,2
-		OS(I) = PAULI_MAT([3])
-	END DO
-	CALL TEN_SAVE('WA',WA)
-	W = MPS(WA)
-	CALL EXPORT('W',W)
-	MA = MEASURE(WA, OS)
-	CALL TEN_SAVE('MA',MA)
+!	WRITE (*,'(A,I3,A,F5.2,A,F5.2,A,F5.2)') 'cut = ', MAX_CUT, ', theta = ', THETA/PI, '*pi, beta = ', BETA, ', crossing = ', CROSS
+!	CALL SET_MPO(TB)
+!	CALL DMRG(TB, WA)
+!	DO I = 1,2
+!		OS(I) = PAULI_MAT([3])
+!	END DO
+!	CALL TEN_SAVE('WA',WA)
+!!	W = MPS(WA)
+!!	CALL EXPORT('W',W)
+!	MA = MEASURE(WA, OS)
+!	CALL TEN_SAVE('MA',MA)
 END SUBROUTINE TEST_MEASURE
+! test transfer matrix
+SUBROUTINE TEST_TRANSF()
+	USE MATHIO
+	INTEGER, PARAMETER :: N = 2, L = 100
+	TYPE(TENSOR) :: T
+	INTEGER :: I, J, D
+	INTEGER, ALLOCATABLE :: LBS(:)
+	COMPLEX, ALLOCATABLE :: M(:,:), S(:,:), A(:,:), B(:,:)
+	COMPLEX :: Z(2,L), A0, F
+	
+!	CALL SET_MPO(T)
+!	DO I = 1, N
+!		!           3
+!		!       ╭───┴───╮
+!		!       3       3
+!		! 1 ─ 1 T 2 ─ 1 T 2 ─ 2
+!		!       4       4
+!		!       ╰───┬───╯
+!		!           4
+!		T = TEN_FLATTEN(TEN_PROD(T,T,[2],[1]),[1,0,4,0,2,5,0,3,6])
+!	END DO
+!	T = TEN_TRACE(T,[1],[2])
+!	M = TEN2MAT(T,[1],[2])
+!	D = SIZE(M,1)
+!	CALL EXPORT('M',M)
+!	ALLOCATE(LBS(2**N))
+!	LBS = 0
+!	LBS(1) = 3
+!	LBS(2**N) = 3 
+!	S = TEN2MAT(PAULI_MAT(LBS),[1],[2])
+!	A = M
+!	A0 = SUM([(A(I,I),I=1,D)])
+!	A = A/A0
+!	F = LOG(A0)/LOG(2.)
+!	DO J = 1, L
+!		B = MATMUL(S,A)
+!		Z(1,J) = SUM([(B(I,I),I=1,D)])
+!		Z(2,J) = F
+!		A = MATMUL(M,A)
+!		A0 = SUM([(A(I,I),I=1,D)])
+!		A = A/A0
+!		F = F + LOG(A0)/LOG(2.)
+!	END DO
+!	CALL EXPORT('Z',Z)
+END SUBROUTINE TEST_TRANSF
 ! end of module TASK
 END MODULE TASK
 ! ############### PROGRAM ##################
@@ -1007,7 +1100,8 @@ PROGRAM MAIN
 	PRINT *, '------------ DMRG -------------'
 
 !	CALL TEST()
-!	CALL TEST_DMRG()
+	CALL TEST_DMRG()
 !	CALL TEST_MEASURE()
-	CALL COLLECT([0.4407]) !0.440687
+!	CALL TEST_TRANSF()
+!	CALL COLLECT([0.4406])
 END PROGRAM MAIN

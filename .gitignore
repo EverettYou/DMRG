@@ -1,4 +1,17 @@
-./build/*
-*.nb
+# Compiled source #
+*.mod
+*.o
+# Logs and data #
+*.log
 *.dat
 *.ten
+# Mathematica notebook #
+*.nb
+# OS generated files #
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
