@@ -196,11 +196,11 @@ SUBROUTINE MV_ACTION(V1, V2, VALS, LINDS, RINDS)
 		V2(LINDS(IREC)) = V2(LINDS(IREC)) + VALS(IREC)*V1(RINDS(IREC))
 	END DO
 END SUBROUTINE MV_ACTION
-! Schur decomposition
+! Schur decomposition (LAPACK)
 SUBROUTINE SCHUR(A, V, TOL)
-! in-place Schur for A
-! returning A in Schur form and unitary V
-! such that A -> V*A*V^H
+! Schur decomposition of A (in-place)
+! returning Schur form S and unitary V
+! such that A -> V*S*V^H
 	COMPLEX, INTENT(INOUT) :: A(:,:)
 	COMPLEX, ALLOCATABLE, INTENT(OUT) :: V(:,:)
 	REAL, OPTIONAL :: TOL
@@ -222,9 +222,16 @@ SUBROUTINE SCHUR(A, V, TOL)
 	ALLOCATE(W(N),V(N,N),WORK(2*N),RWORK(N),BWORK(N))
 	! call LAPACK for Schur decomposition
 	CALL ZGEES('V','S',SEL,N,A,N,SDIM,W,V,N,WORK,2*N,RWORK,BWORK,INFO)
+	IF (INFO /= 0) THEN ! error handling
+		IF (INFO > 0) THEN
+			WRITE (*,'(A)') 'SCHUR::fcnv: the QR algorithm failed.'
+		ELSE
+			WRITE (*,'(A,I3)') 'SCHUR::xinf: ZGEEV error ', INFO
+		END IF
+	END IF
 	! truncate and output
 	IF (SDIM /= 0 .AND. SDIM /= N) THEN
-		V = V(:,1:SDIM)
+		V = V(:,:SDIM)
 	END IF
 END SUBROUTINE SCHUR
 ! Schur decomposition selection function
@@ -265,6 +272,21 @@ RECURSIVE FUNCTION MATPOWER(M, N) RESULT (A)
 			WRITE(*,'(A)')'MATPOWER::ipow: zero and negative power is not supported yet.'
 	END SELECT
 END FUNCTION MATPOWER
+! diagonal of matrix
+FUNCTION DIAGONAL(M) RESULT(D)
+! input: M - matrix, output: D - diagonal
+! such that D(I) = M(I,I)
+        COMPLEX, INTENT(IN) :: M(:,:)
+        COMPLEX, ALLOCATABLE :: D(:)
+        ! local variable
+        INTEGER :: I, N
+        
+        N = MINVAL(SHAPE(M)) ! get min dim
+        ALLOCATE(D(N)) ! allocate space
+        FORALL (I = 1:N) ! filling data
+                D(I) = M(I,I)
+        END FORALL
+END FUNCTION DIAGONAL
 ! ----------- sort -------------
 ! ordering (by merge sort)
 FUNCTION D_ORDERING(F) RESULT(X)
@@ -767,13 +789,15 @@ FUNCTION ANNEAL0(TS, W) RESULT (TVAL)
 	COMPLEX :: TVAL
 	! parameters
 	INTEGER, PARAMETER :: N = 16 ! Krylov space dimension
-	INTEGER, PARAMETER :: MAX_ITER = 500 ! max interation
+	INTEGER, PARAMETER :: MAX_ITER =8 ! max interation
 	! local variables
 	INTEGER :: DIM, D, DS, I, ITER
 	INTEGER, ALLOCATABLE :: LINDS(:), RINDS(:), ORDS(:)
 	COMPLEX, ALLOCATABLE :: V(:,:), VS(:,:), V1(:)
-	COMPLEX :: A(N,N), TVAL
+	COMPLEX :: A(N,N), FID
 	REAL, PARAMETER :: TOL = 1.E-12
+	
+	COMPLEX, ALLOCATABLE :: A0(:,:)
 	
 	! leg indexing (remember to +1)
 	LINDS = COLLECT_INDS(TS,[1,3,5,7]) + 1
@@ -793,22 +817,21 @@ FUNCTION ANNEAL0(TS, W) RESULT (TVAL)
 		IF (D > N/2) D = N/2 ! if D too full, cut to half
 		CALL ARNOLDI(A,N,V,D,TS%VALS,LINDS,RINDS)
 		! now TS is represented as A(:D,:D) by V(:,:D)
+		A0 = A
 		! Schur decomposition
 		CALL SCHUR(A(:D,:D),VS)
+		! now A -> V*A*VS^H
 		DS = SIZE(VS,2) ! get Schur cutoff dimension
 		! update Krylov subspace
 		V(:,:DS) = MATMUL(V(:,:D),VS)
-		! test convergence by fidelity
-		CALL MV_ACTION(V(:,1),V1,TS%VALS,LINDS,RINDS) ! one more action on ground state
-		FID = DOT_PRODUCT(V(:,1),V1)/A(1,1)
-		PRINT '(I3,G10.3,6F8.3)', ITER, ABS(FID - Z1), A(1,1),A(2,2),A(3,3)
+		PRINT '(100F12.8)', DIAGONAL(A(:4,:4))
 		! get mode ordering according to large power of A
 		ORDS = GET_ORDS(A(:DS,:DS)) ! ordering without zeros
 		! now A(ORDS,ORDS) is the density matrix kernel
 		! and V(:,ORDS) holds the basis
 		D = SIZE(ORDS)      ! rec num of modes
 		V(:,:D) = V(:,ORDS) ! move these modes to the front
-		IF (ABS(FID - Z1)< TOL .AND. ITER > 3) THEN
+		IF (ABS(FID - Z1)< TOL) THEN
 			! error less than tol, converged
 			TVAL = A(1,1) ! return max eigen val
 			EXIT ! exit do
@@ -842,11 +865,7 @@ FUNCTION GET_ORDS(A) RESULT(ORDS)
 	! power by CIR
 	B = MATPOWER(B, CIR)
 	! get abs diagonal of B 
-	N = SIZE(B,1)    ! first get dim of B
-	ALLOCATE(C(N))   ! then prepare space to hold diagonal
-	FORALL (I = 1:N) ! fill C with abs diagonal
-		C(I) = ABS(B(I,I))
-	END FORALL
+	C = ABS(DIAGONAL(B))
 	! scaled by the max val
 	C0 = MAXVAL(C)
 	IF (C0 > 1) C = C/C0
