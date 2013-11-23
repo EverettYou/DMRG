@@ -8,13 +8,10 @@ END MODULE CONST
 ! ############### MODEL ###################
 MODULE MODEL
 	USE CONST
-	REAL    :: THETA = 0.*PI ! theta-term
-	REAL    :: CROSS = 1.    ! crossing: 1. = allow, 0. = avoid
-	REAL    :: BETA = 0.440687    ! inverse temperature 0.440687
-	INTEGER :: LEN = 50 
-	INTEGER :: MAX_CUT = 10  ! 16
+	INTEGER :: LEN = 6
+	INTEGER :: MAX_CUT = 12  ! 16
 	REAL    :: MAX_ERR = 0.
-	INTEGER :: SWEEPS = 1
+	INTEGER :: SWEEPS = 3
 END MODULE MODEL
 ! ################ MATH ################### 
 MODULE MATH
@@ -25,6 +22,7 @@ MODULE MATH
 		REAL :: LEV ! scale by EXP(LEV)
 	END TYPE HUGE_TENSOR
 CONTAINS
+! -------- huge tensor -----------
 ! rescale huge tensor
 SUBROUTINE RESCALE(A)
 ! inout: A - huge tensor to be rescaled (in place)
@@ -38,6 +36,7 @@ SUBROUTINE RESCALE(A)
 		A%LEV = A%LEV + LOG(R) ! update the lev
 	END IF
 END SUBROUTINE RESCALE
+! -------- combinatorial ---------
 ! cal binomial
 FUNCTION BINOMIAL(L, K) RESULT(N)
 ! N = L!/(L-K)!K!
@@ -85,11 +84,14 @@ MODULE DATAPOOL
 	TYPE(HUGE_TENSOR), POINTER :: DA(:), DB(:) ! block-MPO
 	TYPE(TENSOR) :: P ! Schmidt tensor
 	! variables
-	REAL :: F ! free energy
+	REAL :: F       ! free energy
+	REAL, POINTER :: FS(:)   ! free energy lattice dependence
+	REAL, POINTER :: SS(:,:) ! entanglement entropy
 	! private data storages (only assessable through pointers)
 	TYPE(TENSOR), TARGET, PRIVATE :: T(2)
 	TYPE(TENSOR), TARGET, ALLOCATABLE, PRIVATE :: W(:)
 	TYPE(HUGE_TENSOR), TARGET, ALLOCATABLE, PRIVATE :: D(:)
+	REAL, TARGET, ALLOCATABLE, PRIVATE :: RWORK(:)
 CONTAINS
 ! allocate space for datapool
 SUBROUTINE DAT_ALLOCATE()
@@ -107,6 +109,8 @@ SUBROUTINE DAT_ALLOCATE()
 		ALLOCATE(W(2*LEN)) ! reallocate new size
 		IF (ALLOCATED(D)) DEALLOCATE (D) ! try deallocate
 		ALLOCATE(D(2*LEN)) ! reallocate new size
+		IF (ALLOCATED(RWORK)) DEALLOCATE (RWORK) ! try deallocate
+		ALLOCATE(RWORK(2*LEN+LEN/2)) ! reallocate new size
 		LEN0 = LEN ! keep the current size
 	END IF
 	! make initial association
@@ -133,52 +137,62 @@ SUBROUTINE DAT_ASSOCIATE(MODE)
 			DA => D(LEN+1:)			
 			DB => D(:LEN)
 	END SELECT
+	SS(1:LEN,1:2) => RWORK(1:2*LEN)
+	FS => RWORK(2*LEN+1:2*LEN+LEN/2)
 END SUBROUTINE DAT_ASSOCIATE
+! put MPO to DATAPOOL
+SUBROUTINE SET_MPO(MPO)
+! * DATAPOOL must be initiated before calling me
+	TYPE(TENSOR), INTENT(IN) :: MPO
+	
+	IF (ASSOCIATED(TB) .AND. ASSOCIATED(TA)) THEN
+		TB = MPO ! put MPO to TB
+		! set TA from TB MPO
+		TA = TEN_TRANS(TB,[2,1,3,4]) ! given by 1 <-> 2
+	ELSE
+		WRITE(*,'(A)')'SET_MPO::nptr: pointer TA or TB not associated.'
+	END IF
+END SUBROUTINE SET_MPO
 ! end of module DATAPOOL
 END MODULE DATAPOOL
 ! ############## PHYSICS ###################
 MODULE PHYSICS
 	USE TENSORIAL
 CONTAINS
-! ------------ set MPO tensor ---------------
-! square lattice MPO
-SUBROUTINE SET_MPO()
-! data transfered by DATAPOOL
-! DATAPOOL: TA, TB. MODEL: THETA, BETA, CROSS
-! * DATAPOOL must be initiated before calling me
-	USE DATAPOOL
+! ----------- MPO tensors -----------
+! make MPO tensor B given the quantum number M
+FUNCTION MAKE_B(M) RESULT(B)
+! input: M - physical quantum number
+! output: B - MPO tensor
+	USE CONST
+	USE MATH
+	INTEGER, INTENT(IN) :: M
+	TYPE(TENSOR) :: B
 	! local variables
-	TYPE(TENSOR) :: X, Y, U, UA, UB, S
-	COMPLEX :: Q, B
+	COMPLEX :: A(0:1,0:1,0:1,0:1), Z
+	INTEGER :: I1, I2, I3, I4
 	
-! ++++++++ set the vertex tensor here ++++++++
-	Q = THETA * ZI
-	B = BETA * Z1
-	X =  TENSOR([2,2,2,2],[0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15],[EXP(2*B),EXP(Q/4.),EXP(Q/4.),EXP(Z0),EXP(Q/4.),CROSS*EXP(-2*B - Q/2.),EXP(Z0),EXP(-Q/4.),EXP(Q/4.),EXP(Z0),CROSS*EXP(-2*B + Q/2.),EXP(-Q/4.),EXP(Z0),EXP(-Q/4.),EXP(-Q/4.),EXP(2*B)])
-! ++++++++++++++++++++++++++++++++++++++++++++
-	! symm SVD of X to unitary U and diagonal S
-	CALL SYSVD(X,[1,4],[3,2],U,S)
-	S%VALS = SQRT(S%VALS) ! split S to half
-	U = TEN_PROD(S,U,[2],[3]) ! attach the half S to U
-	! set Y tensor
-	Y = EYE_TEN([2,2,2])
-	! contract U from both sides with Y
-	U = TEN_PROD(U,Y,[3],[3])
-	TB = TEN_TRANS(TEN_PROD(U,U,[2,4],[4,2]),[1,3,2,4])
-	! set TA from TB MPO
-	TA = TEN_TRANS(TB,[2,1,3,4]) ! given by 1 <-> 2
-END SUBROUTINE SET_MPO
+	A = Z0 ! clear
+	Z = Z1/SQRT(REAL(BINOMIAL(4,M+2))) ! save pre-factor
+	FORALL (I1=0:1,I2=0:1,I3=0:1,I4=0:1,-I1-I2+I3+I4==M)
+		A(I4,I2,I1,I3) = Z*(2*I1-1)*(2*I2-1) ! assign
+	END FORALL
+	! make B tensor
+	B%DIMS = [2,2,2,2] ! set dimension
+	CALL TEN_ABSTRACT(A,B)
+END FUNCTION MAKE_B
 ! ----------- DMRG kernel -----------
 ! DMRG controlling routine
-SUBROUTINE DMRG()
+SUBROUTINE DMRG(MPO)
 ! data transfered by DATAPOOL
 ! DATAPOOL: L. MODEL: LEN, SWEEPS
 	USE DATAPOOL
+	TYPE(TENSOR), INTENT(IN) :: MPO 
 	! local variables
 	INTEGER :: ITER
 	
 	CALL DAT_ALLOCATE() ! allocate data pool
-	CALL SET_MPO() ! set MPO tensors
+	CALL SET_MPO(MPO) ! set MPO tensors
 	! iDMRG (warm up)
 	DO L = 1, LEN/2
 		CALL DMRG_STEP('I')
@@ -212,7 +226,7 @@ SUBROUTINE DMRG_STEP(MODE)
 		CASE ('F','B')
 			CALL FDMRG()
 	END SELECT
-	CALL SHOW_DMRG_STATUS(MODE)
+	CALL ISSUE(MODE)
 END SUBROUTINE DMRG_STEP
 ! infinite-size DMRG step
 SUBROUTINE IDMRG()
@@ -240,7 +254,7 @@ SUBROUTINE IDMRG()
 		! initial MPS transfers d.o.f. from leg 2 to 3, with leg 1 dummy
 		WA(1) = TEN_PROD(TENSOR([1],[0],[Z1]),EYE_TEN([DPHY,DPHY]))
 		WB(1) = WA(1) ! WB is the same as WA
-		F = 0. ! set an initial F
+		F = -LOG(ABS(EVALUATE(TB,TA))) ! set an initial F
 		! set initial block MPO (and rescale)
 		DA(1)%TEN = TA
 		DA(1)%LEV = 0.
@@ -255,7 +269,7 @@ SUBROUTINE IDMRG()
 		P0 = P ! P0 is used, update to P
 		TS = MAKE_TS(TA, TB, DA(L-1)%TEN, DB(L-1)%TEN) ! construct TS
 		TVAL = ANNEAL(TS, W) ! anneal W by TS
-		F = DA(L-1)%LEV+DB(L-1)%LEV+LOG(ABS(TVAL)) ! calculate F
+		F = -(DA(L-1)%LEV+DB(L-1)%LEV+LOG(ABS(TVAL))) ! calculate F
 		! SVD split W, and update WA, WB, P
 		CALL SVD(W,[1,2],[3,4],WA(L),WB(L),P,MAX_CUT,MAX_ERR)
 		! update DA, DB and rescale
@@ -291,7 +305,7 @@ SUBROUTINE FDMRG()
 		W = MAKE_W3(P, WB(2), WB(1)) ! estimate trial W
 		TS = MAKE_TS(TA, TB, DA(LEN-2)%TEN) ! construct TS (boundary)
 		TVAL = ANNEAL(TS, W) ! anneal W by TS
-		F = DA(LEN-2)%LEV+LOG(ABS(TVAL)) ! calculate F
+		F = -(DA(LEN-2)%LEV+LOG(ABS(TVAL))) ! calculate F
 		F0 = F ! save F at the last site
 		! SVD split W, update WA, P
 		CALL SVD(W,[1,2],[3,4],WA(LEN-1),WB(1),P,MAX_CUT,MAX_ERR)
@@ -307,12 +321,12 @@ SUBROUTINE FDMRG()
 		DA(LEN)%LEV = DA(LEN-1)%LEV
 		CALL RESCALE(DA(LEN))
 		! return F for the whole lattice
-		F = DA(LEN)%LEV + LOG(ABS(ZVAL(TEN_TRACE(DA(LEN)%TEN,[1,3],[2,4]))))
+		F = -(DA(LEN)%LEV + LOG(ABS(EVALUATE(DA(LEN)%TEN))))
 	ELSE ! 2 <= L <= LEN-2
 		W = MAKE_W3(P, WB(LEN-L+1), WB(LEN-L)) ! estimate trial W
 		TS = MAKE_TS(TA, TB, DA(L-1)%TEN, DB(LEN-L-1)%TEN) ! construct TS
 		TVAL = ANNEAL(TS, W) ! anneal W by TS
-		F = DA(L-1)%LEV+DB(LEN-L-1)%LEV+LOG(ABS(TVAL)) ! calculate F
+		F = -(DA(L-1)%LEV+DB(LEN-L-1)%LEV+LOG(ABS(TVAL))) ! calculate F
 		! SVD split W, update WA, P
 		CALL SVD(W,[1,2],[3,4],WA(L),WB(LEN-L),P,MAX_CUT,MAX_ERR)
 		! update DA and rescale
@@ -754,11 +768,11 @@ FUNCTION MEASURE(OS) RESULT (M)
 	M%INDS = 0  ! clean up
 	M%VALS = Z0 ! clean up
 	! carry out recursive measurement
-	CALL SET_M1(LEN, M%INDS, M%VALS, OS) ! enter without environment
+	CALL HSET_M(LEN, M%INDS, M%VALS, OS) ! enter without environment
 	! on exit, M has been filled with measurement data, return
 END FUNCTION MEASURE
-! measurement kernel
-RECURSIVE SUBROUTINE SET_M1(LA, INDS, VALS, OS, E0)
+! measurement kernel (simple)
+RECURSIVE SUBROUTINE SSET_M(LA, INDS, VALS, OS, E0)
 ! input: LA - num of remaining sites
 !        INDS - indices, VALS - measurement values
 !        OS - MPOs, E0 - environment
@@ -787,7 +801,7 @@ RECURSIVE SUBROUTINE SET_M1(LA, INDS, VALS, OS, E0)
 			CASE (4) ! 4-leg case
 				E = TEN_PROD(EYE_TEN(OS(K)%DIMS([1,2])),EYE_TEN([1,1]))
 			CASE DEFAULT
-				WRITE (*,'(A)') 'SET_M::ornk: rank of observable tensors must be 2 or 4.'
+				WRITE (*,'(A)') 'SSET_M::ornk: rank of observable tensors must be 2 or 4.'
 				STOP
 		END SELECT
 	END IF
@@ -802,16 +816,16 @@ RECURSIVE SUBROUTINE SET_M1(LA, INDS, VALS, OS, E0)
 			! now E can be updated to I-1 lattice
 			E = GROW(E, WA(I)) ! by absorbing WA(I)
 		END DO
-	ELSE
+	ELSE ! K > 1 more than one operator remaining
 		N1 = SIZE(VALS) ! get the size of correlation function
-		DO I = LA, 1, -1
+		DO I = LA, K, -1 ! only down to K, otherwise can't fit operators
 			! cal the workspace range
 			N2 = N1 ! upper range from previous lower range
 			N1 = N1*(I - K)/I ! lower range update
 			! grow E with the last OS(K) at WS(I)
 			! passing the remaining OS to the lower level SET_M
 			! with the workspace bounded by N1+1:N2 
-			CALL SET_M1(I-1,INDS(N1+1:N2),VALS(N1+1:N2),OS(:K-1),GROW(E,WA(I),OS(K)))
+			CALL SSET_M(I-1,INDS(N1+1:N2),VALS(N1+1:N2),OS(:K-1),GROW(E,WA(I),OS(K)))
 			! on return, VALS contains the measurement values
 			! and INDS contains the indices in the lower level
 			! for this level, inds must be lifted by LEN and shifted by (I-1)
@@ -821,7 +835,84 @@ RECURSIVE SUBROUTINE SET_M1(LA, INDS, VALS, OS, E0)
 			E = GROW(E, WA(I)) ! by absorbing WA(I)
 		END DO
 	END IF
-END SUBROUTINE SET_M1
+END SUBROUTINE SSET_M
+! measurement kernel (huge)
+RECURSIVE SUBROUTINE HSET_M(LA, INDS, VALS, OS, E0)
+! input: LA - num of remaining sites
+!        INDS - indices, VALS - measurement values
+!        OS - MPOs, E0 - environment
+! output: INDS, VALS - modified by new measurement data
+! E0 optional: if missing, make it initialized
+	USE MODEL ! LEN
+	USE MATH  ! HUGE_TENSOR
+	USE DATAPOOL ! WA(:), TB
+	INTEGER, INTENT(IN)    :: LA
+	INTEGER, INTENT(INOUT) :: INDS(:)
+	COMPLEX, INTENT(INOUT) :: VALS(:)
+	TYPE(TENSOR), INTENT(IN) :: OS(:)
+	TYPE(HUGE_TENSOR), OPTIONAL, INTENT(IN) :: E0
+	! local tensor
+	TYPE(HUGE_TENSOR) :: E, E1
+	! local variables
+	INTEGER :: K, I, N1, N2
+		
+	K = SIZE(OS) ! get the num of operators
+	! check E0 input
+	IF (PRESENT(E0)) THEN ! if given
+		E = E0 ! use it as the environment
+	ELSE ! if not given, make it from OS(K)
+		SELECT CASE (SIZE(OS(K)%DIMS)) ! branch by # of legs
+			CASE (4) ! 4-leg case
+				E%TEN = TEN_PROD(EYE_TEN(OS(K)%DIMS([1,2])),EYE_TEN([1,1]))
+				E%LEV = 0.
+				CALL RESCALE(E)
+			CASE DEFAULT
+				WRITE (*,'(A)') 'HSET_M::ornk: rank of observable tensors must be 4.'
+				STOP
+		END SELECT
+	END IF
+	! now E has been set, lay down operators
+	IF (K == 1) THEN ! for the last operator OS(1)
+		! make direct measurement on the current lattice
+		DO I = LA, 1, -1
+			! record the index of measurement
+			INDS(I) = I - 1
+			IF (I > 1) THEN
+				! grow E with OS(1) at WA(I) and evaluate
+				VALS(I) = EVALUATE(GROW(E%TEN, WA(I), OS(1)), DA(I-1)%TEN)
+				VALS(I) = VALS(I)*EXP(E%LEV + DA(I-1)%LEV+FS(LEN/2))
+				! now E can be updated to I-1 lattice
+				E%TEN = GROW(E%TEN, WA(I), TB) ! by absorbing WA(I) and TB
+				CALL RESCALE(E)
+			ELSE ! for the last site I = 1
+				! grow E with OS(1) at WA(1) and evaluate
+				VALS(1) = EVALUATE(GROW(E%TEN, WA(1), OS(1)))
+				VALS(1) = VALS(1)*EXP(E%LEV+FS(LEN/2))
+			END IF
+		END DO
+	ELSE ! K > 1 more than one operator remaining
+		N1 = SIZE(VALS) ! get the size of correlation function
+		DO I = LA, K, -1 ! only down to K, otherwise can't fit operators
+			! cal the workspace range
+			N2 = N1 ! upper range from previous lower range
+			N1 = N1*(I - K)/I ! lower range update
+			! grow E with the last OS(K) at WS(I)
+			E1%TEN = GROW(E%TEN,WA(I),OS(K))
+			E1%LEV = E%LEV
+			! passing the remaining OS to the lower level SET_M
+			! with the workspace bounded by N1+1:N2 
+			CALL HSET_M(I-1,INDS(N1+1:N2),VALS(N1+1:N2),OS(:K-1),E1)
+			! on return, VALS contains the measurement values
+			! and INDS contains the indices in the lower level
+			! for this level, inds must be lifted by LEN and shifted by (I-1)
+			INDS(N1+1:N2) = INDS(N1+1:N2) + (I-1)*LEN**(K-1)
+			! the measurement has complete
+			! now E can be updated to I-1 lattice
+			E%TEN = GROW(E%TEN, WA(I), TB) ! by absorbing WA(I) and TB
+			CALL RESCALE(E)
+		END DO
+	END IF
+END SUBROUTINE HSET_M
 ! grow environment tensor
 FUNCTION GROW(E, W, O) RESULT(E1)
 ! input: E - environment tensor, W - MPS tensor
@@ -874,68 +965,97 @@ FUNCTION GROW(E, W, O) RESULT(E1)
 	END IF
 END FUNCTION GROW
 ! evaluate environment tensor
-FUNCTION EVALUATE(E) RESULT(Z)
-! input: E - environment tensor
+FUNCTION EVALUATE(E, D) RESULT(Z)
+! input: E - environment tensor, D - block MPO, optional
 ! output: Z - measurement value of E, by tensor trace
 	USE CONST
 	TYPE(TENSOR), INTENT(IN) :: E
+	TYPE(TENSOR), OPTIONAL, INTENT(IN) :: D
 	COMPLEX :: Z
 	
-	! trace out the legs of E
-	!  ╭───╮
-	!  │   3
-	! ╭┼ 1 E 2 ╮
-	! ││   4   │
-	! │╰───╯   │
-	! ╰────────╯
-	Z = ZVAL(TEN_TRACE(E,[1,3],[2,4]))
+	IF  (PRESENT(D)) THEN
+		! contract E with D
+		!     ╭───────╮
+		!     3       3
+		! ╭ 2 D 1 ─ 1 E 2 ╮
+		! │   4       4   │
+		! │   ╰───────╯   │
+		! ╰───────────────╯
+		Z = ZVAL(TEN_PROD(E,D,[1,2,3,4],[1,2,3,4]))
+	ELSE
+		! trace out the legs of E
+		!  ╭───╮
+		!  │   3
+		! ╭┼ 1 E 2 ╮
+		! ││   4   │
+		! │╰───╯   │
+		! ╰────────╯
+		Z = ZVAL(TEN_TRACE(E,[1,3],[2,4]))
+	END IF
 END FUNCTION EVALUATE
-! ----------- Debug ------------
-! show status after DMRG step
-SUBROUTINE SHOW_DMRG_STATUS(MODE)
+! --------- physical -----------
+! issue physical data after DMRG step
+SUBROUTINE ISSUE(MODE)
 	USE MODEL
 	USE DATAPOOL
 	CHARACTER, INTENT(IN) :: MODE
 	! local variables
-	REAL :: S
 	INTEGER :: I1, I2
 	CHARACTER(2) :: JN
 	
-	SELECT CASE (MODE)
-		CASE ('I')
+	! site labeling system
+	SELECT CASE(MODE)
+		CASE('I')
 			I1 = L
 			I2 = L+1
 			JN = '<>'
-		CASE ('F')
+		CASE('F')
 			I1 = L
 			I2 = L+1
 			JN = '->'
 			IF (I2 == LEN+1) I2 = 1
-		CASE ('B')
+		CASE('B')
 			I1 = LEN-L
 			I2 = LEN-L+1
 			JN = '<-'
 			IF (I1 == 0) I1 = LEN
 	END SELECT
-	IF (L == 0 .OR. L == LEN) THEN
-		S = 0.
-	ELSE
-		S = ENTROPY(P)
+	! free energy recording system
+	IF (MODE == 'I') THEN
+		FS(L) = F
+	ELSE ! for fDMRG, only improve the last free energy
+		FS(LEN/2) = (FS(LEN/2)*(LEN-1) + F)/LEN
 	END IF
-	WRITE (*,'(I3,A,I3,A,F10.6,A,F10.6,A,F5.2,A)') I1,JN,I2,': F = ', F, ', S = ', S/LOG(2.), 'bit ', SVD_ERR*100,'%'
-END SUBROUTINE SHOW_DMRG_STATUS
+	! entanglement entropy recording system
+	IF (L == 0 .OR. L == LEN) THEN
+		SS(L,1) = 0.
+		SS(L,2) = 0.
+	ELSE
+		SS(L,1) = ENTROPY(P, 1)
+		SS(L,2) = ENTROPY(P, 2)
+	END IF
+	! broadcast system
+	WRITE (*,'(I3,A,I3,A,F10.6,A,F6.3,A,F5.2,A)') I1,JN,I2,': F = ', F, ', S = ', SS(L,1)/LOG(2.), 'bit ', SVD_ERR*100,'%'
+END SUBROUTINE ISSUE
 ! cal entanglement entropy
-FUNCTION ENTROPY(P) RESULT (S)
-! input: P - Schmidt spectrum
+FUNCTION ENTROPY(P, N) RESULT (S)
+! input: P - Schmidt spectrum, N - order of entropy
 ! update: S - entanglement entropy
 	TYPE(TENSOR), INTENT(IN) :: P
+	INTEGER, INTENT(IN) :: N
 	REAL :: S
 	! local variables
-	REAL, ALLOCATABLE :: EVALS(:)
+	REAL, ALLOCATABLE :: ES(:)
 	
-	EVALS = REALPART(P%VALS)**2
-	S = -SUM(EVALS*LOG(EVALS))
+	ES = REALPART(P%VALS)**2 ! entanglement weight
+	SELECT CASE(N)
+		CASE (1) ! Shannon entropy
+			S = -SUM(ES*LOG(ES))
+		CASE (2:) ! Rényi entropy
+			S = LOG(SUM(ES**N))/(1-N)
+	END SELECT
 END FUNCTION ENTROPY
+! ----------- Debug ------------
 ! reconstruct wave function
 FUNCTION MPS(WA) RESULT (W)
 ! input: WA - MPS tensors
@@ -967,78 +1087,69 @@ MODULE TASK
 	USE PHYSICS
 CONTAINS
 ! ------------ Data --------------
-! collect data
-SUBROUTINE COLLECT(BETAS)
+SUBROUTINE COLLECT()
 	USE MODEL
-	REAL, INTENT(IN) :: BETAS(:) ! a list of beta to be sampled
-	! local tensors
-	TYPE(TENSOR) :: T, WS(LEN)
-	TYPE(TENSOR) :: M, OS(2)
-	! local variables
-	INTEGER :: I, N
+	USE DATAPOOL
+	TYPE(TENSOR) :: MPO, OS(2), DAT(3)
+	INTEGER :: I
+	CHARACTER(9) :: FILE
 	
-	! prepare observables to be measured
-!	DO I = 1,2 ! two operators are both sigma_3
-!		OS(I) = PAULI_MAT([3])
-!	END DO
-!	N = SIZE(BETAS) ! get size of beta list
-!	DO I = 1, N ! for each beta in the list
-!		BETA = BETAS(I) ! (remember to set beta!!!)
-!		CALL SET_MPO(T) ! update MPO, using new beta
-!		! prepare to launch DMRG
-!		WRITE (*,'(A,I3,A,F5.2,A,F5.2,A,F5.2)') 'cut = ', MAX_CUT, ', theta = ', THETA/PI, '*pi, beta = ', BETA, ', crossing = ', CROSS
-!		! launch DMRG to find ground state MPS given MPO
-!		CALL DMRG(T, WS)
-!		! take measurements on the MPS
-!		M = MEASURE(WS, OS)
-!		! save result to disk
-!		CALL TEN_SAVE('./data center (IS)/M'//FILENAME(),M)
-!	END DO 
+	WRITE (*,'(A,I3)') 'cut = ', MAX_CUT
+	MPO = MAKE_B(0)
+	CALL DMRG(MPO)
+	OS(1) = MAKE_B(1)
+	OS(2) = MAKE_B(-1)
+	DAT(1) = MEASURE(OS)
+	DAT(2)%DIMS = SHAPE(FS)
+	CALL TEN_ABSTRACT(CMPLX(FS), DAT(2))
+	DAT(3)%DIMS = SHAPE(SS)
+	CALL TEN_ABSTRACT(CMPLX(SS), DAT(3))
+	WRITE(FILE,'(A,I0.3,A,I0.2,A,I0.1)')'L',LEN,'D',MAX_CUT,'S',SWEEPS
+	CALL TEN_SAVE('data center (AKLT)/'//FILE,DAT)
 END SUBROUTINE COLLECT
-! make filename
-FUNCTION FILENAME()
-! file naming system
-! call by COLLECT, will use MODEL parameters
-	USE MODEL
-	CHARACTER(15) :: FILENAME
-	
-	WRITE (FILENAME,'(A,I2,A,I1,A,I1,A,I1,A,I5.4)') 'D',MAX_CUT,'S',SWEEPS,'Q',NINT(THETA/PI),'C',NINT(CROSS),'B',NINT(BETA*10000)
-END FUNCTION FILENAME
 ! ------------ Tests -------------
 ! test routine
 SUBROUTINE TEST()
 	USE DATAPOOL
 	
-	CALL DAT_ALLOCATE()
-	CALL DAT_ASSOCIATE('I')
-	CALL SET_MPO()
-	PRINT *, SIZE(TA%VALS)
 END SUBROUTINE TEST
+! test MAKE_B
+SUBROUTINE TEST_B()
+	TYPE(TENSOR) :: B
+	
+	B = MAKE_B(0)
+	CALL TEN_PRINT(B)
+END SUBROUTINE TEST_B
 ! test DMRG
 SUBROUTINE TEST_DMRG()
 	USE MODEL
+	TYPE(TENSOR) :: MPO
 	REAL :: T0, T1
 	
-	WRITE (*,'(A,I3,A,F5.2,A,F5.2,A,F5.2)') 'cut = ', MAX_CUT, ', theta = ', THETA/PI, '*pi, beta = ', BETA, ', crossing = ', CROSS
+	WRITE (*,'(A,I3)') 'cut = ', MAX_CUT
+	MPO = MAKE_B(0)
 	CALL CPU_TIME(T0)
-	CALL DMRG()
+	CALL DMRG(MPO)
 	CALL CPU_TIME(T1)
-	PRINT *, T1-T0
+	PRINT '(A,F7.3,A)', 'timing:', T1-T0, 's'
 END SUBROUTINE TEST_DMRG
 ! test MEASURE
 SUBROUTINE TEST_MEASURE()
 	USE MATHIO
 	USE MODEL
-	TYPE(TENSOR) :: M, OS(2)
+	USE DATAPOOL
+	TYPE(TENSOR) :: MPO, M, OS(2)
 	INTEGER :: I
 	
-	WRITE (*,'(A,I3,A,F5.2,A,F5.2,A,F5.2)') 'cut = ', MAX_CUT, ', theta = ', THETA/PI, '*pi, beta = ', BETA, ', crossing = ', CROSS
-	CALL DMRG()
-	DO I = 1,2
-		OS(I) = PAULI_MAT([3])
-	END DO
+	WRITE (*,'(A,I3)') 'cut = ', MAX_CUT
+	MPO = MAKE_B(0)
+	CALL DMRG(MPO)
+	OS(1) = MAKE_B(1)
+	OS(2) = MAKE_B(-1)
 	M = MEASURE(OS)
 	CALL TEN_SAVE('M',M)
+	CALL EXPORT('FS',FS)
+	CALL EXPORT('SS',SS)
 END SUBROUTINE TEST_MEASURE
 ! test transfer matrix
 SUBROUTINE TEST_TRANSF()
@@ -1050,21 +1161,21 @@ SUBROUTINE TEST_TRANSF()
 	COMPLEX, ALLOCATABLE :: M(:,:), S(:,:), A(:,:), B(:,:)
 	COMPLEX :: Z(2,L), A0, F
 	
-!	CALL SET_MPO(T)
-!	DO I = 1, N
-!		!           3
-!		!       ╭───┴───╮
-!		!       3       3
-!		! 1 ─ 1 T 2 ─ 1 T 2 ─ 2
-!		!       4       4
-!		!       ╰───┬───╯
-!		!           4
-!		T = TEN_FLATTEN(TEN_PROD(T,T,[2],[1]),[1,0,4,0,2,5,0,3,6])
-!	END DO
-!	T = TEN_TRACE(T,[1],[2])
-!	M = TEN2MAT(T,[1],[2])
-!	D = SIZE(M,1)
-!	CALL EXPORT('M',M)
+	T = MAKE_B(0)
+	DO I = 1, N
+		!           3
+		!       ╭───┴───╮
+		!       3       3
+		! 1 ─ 1 T 2 ─ 1 T 2 ─ 2
+		!       4       4
+		!       ╰───┬───╯
+		!           4
+		T = TEN_FLATTEN(TEN_PROD(T,T,[2],[1]),[1,0,4,0,2,5,0,3,6])
+	END DO
+	T = TEN_TRACE(T,[1],[2])
+	M = TEN2MAT(T,[1],[2])
+	D = SIZE(M,1)
+	CALL EXPORT('M',M)
 !	ALLOCATE(LBS(2**N))
 !	LBS = 0
 !	LBS(1) = 3
@@ -1094,8 +1205,9 @@ PROGRAM MAIN
 	PRINT *, '------------ DMRG -------------'
 
 !	CALL TEST()
+!	CALL TEST_B()
 !	CALL TEST_DMRG()
-	CALL TEST_MEASURE()
+!	CALL TEST_MEASURE()
 !	CALL TEST_TRANSF()
-!	CALL COLLECT([0.4406])
+	CALL COLLECT()
 END PROGRAM MAIN
